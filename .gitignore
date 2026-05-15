@@ -1,0 +1,12 @@
+.idea/
+target/
+*.class
+*.jar
+venv/
+__pycache__/
+*.pyc
+.env
+.DS_Store
+python-agent/__pycache__/
+java-server/target/
+python-agent/.pytest_cache/

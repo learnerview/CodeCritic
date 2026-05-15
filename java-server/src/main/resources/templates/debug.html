@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CodeCritic - Debug Assistant</title>
+    <!-- CodeMirror Assets -->
+    <link rel="stylesheet" href="https://unpkg.com/codemirror@5.65.13/lib/codemirror.css">
+    <link rel="stylesheet" href="https://unpkg.com/codemirror@5.65.13/theme/dracula.css">
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <div class="orb orb-a"></div>
+    <div class="orb orb-b"></div>
+    <main class="shell">
+        <section class="hero">
+            <p class="eyebrow">Debug Assistant</p>
+            <h1>Diagnose production issues with AI.</h1>
+            <p class="lede">Paste your error logs and the relevant source code to get a root cause analysis and fix guidance.</p>
+            <div class="actions">
+                <a class="nav-link" href="/index.html">Home</a>
+                <a class="nav-link" href="/review.html">Snippet Review</a>
+                <a class="nav-link" href="/repository.html">Repository Analysis</a>
+            </div>
+        </section>
+        <section class="panel">
+            <div class="panel-header">
+                <h2>Incident Context</h2>
+                <button id="debugAnalyzeBtn" class="ghost">Run Diagnosis</button>
+            </div>
+            <label class="field-label" for="debugLanguage">Language</label>
+            <input id="debugLanguage" type="text" value="java" placeholder="java">
+            
+            <label class="field-label">Source Code</label>
+            <div class="editor-container">
+                <textarea id="debugCodeInput" style="display: block;">public class A {
+    int f(int x) {
+        return 10 / x;
+    }
+}</textarea>
+            </div>
+            
+            <label class="field-label" for="debugErrorInput">Error Logs / Stacktrace</label>
+            <textarea id="debugErrorInput" style="min-height: 150px;" spellcheck="false" placeholder="Paste error logs here..."></textarea>
+        </section>
+        <section class="panel results">
+            <div class="panel-header">
+                <h2>AI Diagnosis</h2>
+                <span id="debugStatusText">Idle</span>
+            </div>
+            <pre id="debugOutput">Provide source and logs to see the AI's diagnosis and fix strategy.</pre>
+        </section>
+    </main>
+
+    <!-- CodeMirror Scripts -->
+    <script src="https://unpkg.com/codemirror@5.65.13/lib/codemirror.js"></script>
+    <script src="https://unpkg.com/codemirror@5.65.13/mode/clike/clike.js"></script>
+    <script src="/js/app.js"></script>
+</body>
+</html>
