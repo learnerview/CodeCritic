@@ -1,0 +1,55 @@
+codecritic:
+  api:
+    auth-token: ${API_AUTH_TOKEN:}
+  cors:
+    allowed-origins: ${CORS_ALLOW_ORIGINS:*}
+  analysis:
+    job:
+      max-attempts: 3
+      timeout-seconds: 60
+      priority: NORMAL
+
+spring:
+  servlet:
+    multipart:
+      max-file-size: 1MB
+      max-request-size: 2MB
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+simplydone4j:
+  key-prefix: codecritic
+  ttl-days: 7
+  idempotency-ttl-hours: 2
+  scheduler:
+    polling-interval-ms: 1000
+    queue-prefix: "codecritic:queue"
+    weights:
+      high: 70
+      normal: 20
+      low: 10
+  rate-limit:
+    requests-per-minute: 60
+    window-seconds: 60
+  retry:
+    max-attempts: 3
+    initial-delay-seconds: 5
+    backoff-multiplier: 2.0
+  worker:
+    lease-timeout-seconds: 60
+    retry-promoter-interval-ms: 5000
+    lease-reaper-interval-ms: 10000
+  queue:
+    max-depth: 5000
+  executor:
+    core-pool-size: 2
+    max-pool-size: 4
+    queue-capacity: 50
+    keep-alive-seconds: 60
+    default-timeout-seconds: 30
+
+logging:
+  level:
+    com.codecritic: DEBUG

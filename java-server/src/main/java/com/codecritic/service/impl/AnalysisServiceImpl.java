@@ -11,6 +11,10 @@ import com.github.javaparser.ast.expr.ConditionalExpr;
 import com.github.javaparser.ast.expr.BinaryExpr;
 import com.github.javaparser.ast.stmt.*;
 import com.github.javaparser.ast.visitor.VoidVisitorAdapter;
+import io.github.learnerview.simplydone4j.dto.JobSubmissionRequest;
+import io.github.learnerview.simplydone4j.dto.JobSubmissionResponse;
+import io.github.learnerview.simplydone4j.dto.JobResponse;
+import io.github.learnerview.simplydone4j.service.JobSubmissionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -21,7 +25,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
@@ -32,6 +38,12 @@ import java.util.stream.Collectors;
 public class AnalysisServiceImpl implements AnalysisService {
 
     private static final Logger log = LoggerFactory.getLogger(AnalysisServiceImpl.class);
+
+    private final JobSubmissionService jobSubmissionService;
+
+    public AnalysisServiceImpl(JobSubmissionService jobSubmissionService) {
+        this.jobSubmissionService = jobSubmissionService;
+    }
 
     @Override
     public ComplexityResponse calculateComplexity(String code) {
@@ -332,5 +344,30 @@ public class AnalysisServiceImpl implements AnalysisService {
             return "        assertTrue(result == Boolean.TRUE || result == Boolean.FALSE);\n";
         }
         return "        assertNotNull(result);\n";
+    }
+
+    @Override
+    public JobSubmissionResponse submitAnalysisJob(String jobType, Map<String, Object> payload) {
+        log.info("Submitting {} job to SimplyDone4J", jobType);
+        JobSubmissionRequest request = new JobSubmissionRequest();
+        request.setJobType(jobType);
+        request.setIdempotencyKey(UUID.randomUUID().toString());
+        request.setPayload(payload);
+        return jobSubmissionService.submit("codecritic", request);
+    }
+
+    @Override
+    public Object getJobResult(String jobId) {
+        log.info("Retrieving result for job {}", jobId);
+        try {
+            JobResponse response = jobSubmissionService.getJob(jobId);
+            if ("SUCCESS".equals(response.getStatus()) && response.getResult() != null) {
+                return response;
+            }
+            return null;
+        } catch (Exception e) {
+            log.warn("Failed to retrieve job {} result: {}", jobId, e.getMessage());
+            return null;
+        }
     }
 }

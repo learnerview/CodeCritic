@@ -3,13 +3,15 @@ package com.codecritic.service.impl;
 import com.codecritic.dto.BugReport;
 import com.codecritic.dto.ComplexityResponse;
 import com.codecritic.dto.TestGenerationResponse;
+import io.github.learnerview.simplydone4j.service.JobSubmissionService;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.mock;
 
 public class AnalysisServiceImplTest {
 
-    private final AnalysisServiceImpl service = new AnalysisServiceImpl();
+    private final AnalysisServiceImpl service = new AnalysisServiceImpl(mock(JobSubmissionService.class));
 
     @Test
     public void calculateComplexity_simpleIf_returnsExpected() {
