@@ -226,7 +226,15 @@ function initTabs() {
             const tab = button.dataset.tab;
             document.querySelectorAll('.tab-view').forEach((view) => {
                 view.classList.remove('active');
-                if (view.id === `tab-${tab}`) view.classList.add('active');
+                if (view.id === `tab-${tab}`) {
+                    view.classList.add('active');
+                    // Fix CodeMirror shrinking to a few lines when initialized in a hidden tab
+                    setTimeout(() => {
+                        view.querySelectorAll('.CodeMirror').forEach((cmNode) => {
+                            if (cmNode.CodeMirror) cmNode.CodeMirror.refresh();
+                        });
+                    }, 10);
+                }
             });
         });
     });
