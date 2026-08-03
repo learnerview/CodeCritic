@@ -20,6 +20,7 @@ services:
       - "8080:8080"
     environment:
       - REDIS_URL=redis://redis:6379
+      - SPRING_DATA_MONGODB_URI=mongodb://host.docker.internal:27017/codecritic
       - AUTH_USERNAME=${AUTH_USERNAME:-admin}
       - AUTH_PASSWORD=${AUTH_PASSWORD:-admin}
       - JWT_SECRET=${JWT_SECRET:-codecritic-demo-secret-key-change-me-in-production-0123456789}

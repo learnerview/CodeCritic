@@ -2,6 +2,7 @@ package com.codecritic.controller;
 
 import com.codecritic.dto.auth.LoginRequest;
 import com.codecritic.dto.auth.LoginResponse;
+import com.codecritic.dto.auth.RegisterRequest;
 import com.codecritic.security.JwtTokenProvider;
 import com.codecritic.service.AuthService;
 import org.junit.jupiter.api.Test;
@@ -67,5 +68,34 @@ class AuthControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"username\":\"\",\"password\":\"\"}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void register_success_returnsToken() throws Exception {
+        when(authService.register(any(RegisterRequest.class)))
+                .thenReturn(LoginResponse.builder()
+                        .token("jwt-token")
+                        .tokenType("Bearer")
+                        .expiresInMs(86400000L)
+                        .username("newuser")
+                        .build());
+
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"newuser\",\"password\":\"newpass\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.token").value("jwt-token"))
+                .andExpect(jsonPath("$.username").value("newuser"));
+    }
+
+    @Test
+    void register_badCredentials_returns401() throws Exception {
+        when(authService.register(any(RegisterRequest.class)))
+                .thenThrow(new BadCredentialsException("Username already exists"));
+
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"existing\",\"password\":\"pass\"}"))
+                .andExpect(status().isUnauthorized());
     }
 }

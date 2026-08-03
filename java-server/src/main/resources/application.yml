@@ -18,6 +18,9 @@ codecritic:
     allowed-origins: ${CORS_ALLOW_ORIGINS:*}
 
 spring:
+  data:
+    mongodb:
+      uri: ${SPRING_DATA_MONGODB_URI:mongodb://localhost:27017/codecritic}
   servlet:
     multipart:
       max-file-size: 1MB

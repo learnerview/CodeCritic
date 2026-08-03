@@ -1,5 +1,6 @@
 package com.codecritic.security;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -25,6 +26,14 @@ class SecurityIntegrationTest {
     @Autowired
     private MockMvc mockMvc;
 
+    @Autowired
+    private com.codecritic.repository.UserRepository userRepository;
+
+    @BeforeEach
+    void cleanup() {
+        userRepository.deleteByUsername("testuser");
+    }
+
     @Test
     void protectedEndpoint_rejectsAnonymousRequest() throws Exception {
         mockMvc.perform(post("/api/complexity")
@@ -44,9 +53,14 @@ class SecurityIntegrationTest {
 
     @Test
     void loginThenCallProtectedEndpoint_succeeds() throws Exception {
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"testuser\",\"password\":\"testpass\"}"))
+                .andExpect(status().isOk());
+
         MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"username\":\"admin\",\"password\":\"admin\"}"))
+                        .content("{\"username\":\"testuser\",\"password\":\"testpass\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.token").isNotEmpty())
                 .andReturn();

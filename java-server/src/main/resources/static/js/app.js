@@ -95,18 +95,17 @@ async function postJson(url, body, timeoutMs = 150000) {
     }
     clearTimeout(timer);
 
-    if (response.status === 401) {
-        clearToken();
-        showLogin();
-        throw new Error('Session expired. Please sign in again.');
-    }
-
     const text = await response.text();
     let parsed;
     try {
         parsed = text ? JSON.parse(text) : {};
     } catch {
         parsed = { raw: text };
+    }
+
+    if (response.status === 401) {
+        clearToken();
+        showLogin();
     }
 
     if (!response.ok) {
@@ -171,10 +170,68 @@ function hideLogin() {
     if (overlay) overlay.style.display = 'none';
 }
 
+function showSignupForm() {
+    const signinForm = byId('signinForm');
+    const signupForm = byId('signupForm');
+    const tabs = document.querySelectorAll('.auth-tab');
+    const title = byId('authTitle');
+    const lede = byId('authLede');
+    if (signinForm) signinForm.style.display = 'none';
+    if (signupForm) signupForm.style.display = 'flex';
+    tabs.forEach((t) => t.classList.remove('active'));
+    const signupTab = document.querySelector('.auth-tab[data-auth="signup"]');
+    if (signupTab) signupTab.classList.add('active');
+    if (title) title.textContent = 'Create account';
+    if (lede) lede.textContent = 'Sign up to start analyzing code.';
+}
+
+function showSigninForm() {
+    const signinForm = byId('signinForm');
+    const signupForm = byId('signupForm');
+    const tabs = document.querySelectorAll('.auth-tab');
+    const title = byId('authTitle');
+    const lede = byId('authLede');
+    if (signinForm) signinForm.style.display = 'flex';
+    if (signupForm) signupForm.style.display = 'none';
+    tabs.forEach((t) => t.classList.remove('active'));
+    const signinTab = document.querySelector('.auth-tab[data-auth="signin"]');
+    if (signinTab) signinTab.classList.add('active');
+    if (title) title.textContent = 'Welcome back';
+    if (lede) lede.textContent = 'Use your credentials to access the workspace.';
+}
+
 function initAuth() {
     const loginBtn = byId('loginBtn');
+    const registerBtn = byId('registerBtn');
     const logoutBtn = byId('logoutBtn');
     const loginError = byId('loginError');
+    const registerError = byId('registerError');
+    const goToRegister = byId('goToRegister');
+    const goToSignin = byId('goToSignin');
+
+    if (goToRegister) {
+        goToRegister.addEventListener('click', (e) => {
+            e.preventDefault();
+            showSignupForm();
+        });
+    }
+
+    if (goToSignin) {
+        goToSignin.addEventListener('click', (e) => {
+            e.preventDefault();
+            showSigninForm();
+        });
+    }
+
+    document.querySelectorAll('.auth-tab').forEach((tab) => {
+        tab.addEventListener('click', () => {
+            if (tab.dataset.auth === 'signup') {
+                showSignupForm();
+            } else {
+                showSigninForm();
+            }
+        });
+    });
 
     if (loginBtn) {
         loginBtn.addEventListener('click', async () => {
@@ -198,6 +255,34 @@ function initAuth() {
         });
     }
 
+    if (registerBtn) {
+        registerBtn.addEventListener('click', async () => {
+            if (registerError) registerError.textContent = '';
+            const password = byId('registerPassword').value;
+            const confirmPassword = byId('registerConfirmPassword').value;
+            if (password !== confirmPassword) {
+                if (registerError) registerError.textContent = 'Passwords do not match';
+                return;
+            }
+            registerBtn.disabled = true;
+            registerBtn.innerHTML = withSpinner('Creating account...');
+            try {
+                const data = await postJson('/api/auth/register', {
+                    username: byId('registerUsername').value.trim(),
+                    password: password
+                });
+                setToken(data.token, data.username);
+                hideLogin();
+                updateUserChip();
+            } catch (error) {
+                if (registerError) registerError.textContent = String(error.message || error);
+            } finally {
+                registerBtn.disabled = false;
+                registerBtn.innerHTML = withoutSpinner('Sign up');
+            }
+        });
+    }
+
     if (logoutBtn) {
         logoutBtn.addEventListener('click', () => {
             clearToken();
@@ -210,6 +295,7 @@ function initAuth() {
         updateUserChip();
     } else {
         showLogin();
+        showSigninForm();
     }
 }
 

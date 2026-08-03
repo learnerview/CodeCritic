@@ -2,6 +2,7 @@ package com.codecritic.controller;
 
 import com.codecritic.dto.auth.LoginRequest;
 import com.codecritic.dto.auth.LoginResponse;
+import com.codecritic.dto.auth.RegisterRequest;
 import com.codecritic.service.AuthService;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
@@ -28,5 +29,11 @@ public class AuthController {
     public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
         log.info("Login attempt for user: {}", request.getUsername());
         return ResponseEntity.ok(authService.authenticate(request));
+    }
+
+    @PostMapping("/register")
+    public ResponseEntity<LoginResponse> register(@Valid @RequestBody RegisterRequest request) {
+        log.info("Registration attempt for user: {}", request.getUsername());
+        return ResponseEntity.ok(authService.register(request));
     }
 }

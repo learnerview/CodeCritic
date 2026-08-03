@@ -19,6 +19,11 @@ public class FrontendController {
         return resourceResponse("templates/index.html", MediaType.TEXT_HTML);
     }
 
+    @GetMapping(value = "/favicon.ico")
+    public ResponseEntity<Void> favicon() {
+        return ResponseEntity.noContent().build();
+    }
+
     @GetMapping(value = "/css/style.css", produces = "text/css")
     public ResponseEntity<Resource> style() {
         return resourceResponse("static/css/style.css", MediaType.valueOf("text/css"));

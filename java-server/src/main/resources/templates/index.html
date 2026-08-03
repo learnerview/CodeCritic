@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="/vendor/codemirror/addon/fold/foldgutter.css">
     <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
     <link rel="stylesheet" href="/vendor/codemirror/theme/dracula.css">
-    <link rel="stylesheet" href="/css/style.css?v=5">
+    <link rel="stylesheet" href="/css/style.css?v=7">
 </head>
 <body>
     <div class="orb orb-a"></div>
@@ -16,15 +16,35 @@
 
     <div id="loginOverlay" class="login-overlay" style="display:none;">
         <div class="login-card">
-            <p class="eyebrow">CodeCritic</p>
-            <h1 class="login-title">Sign in</h1>
-            <p class="lede login-lede">Use your credentials to access the workspace.</p>
-            <label class="field-label" for="loginUsername">Username</label>
-            <input id="loginUsername" type="text" placeholder="admin" autocomplete="username">
-            <label class="field-label" for="loginPassword">Password</label>
-            <input id="loginPassword" type="password" placeholder="admin" autocomplete="current-password">
-            <button id="loginBtn" class="login-btn">Sign in</button>
-            <p id="loginError" class="login-error"></p>
+            <div class="login-header">
+                <p class="eyebrow">CodeCritic</p>
+                <h1 class="login-title" id="authTitle">Welcome back</h1>
+                <p class="lede login-lede" id="authLede">Use your credentials to access the workspace.</p>
+            </div>
+            <div class="auth-tabs">
+                <button class="auth-tab active" data-auth="signin">Sign in</button>
+                <button class="auth-tab" data-auth="signup">Register</button>
+            </div>
+            <form id="signinForm" class="auth-form" onsubmit="return false;">
+                <label class="field-label" for="loginUsername">Username</label>
+                <input id="loginUsername" type="text" placeholder="admin" autocomplete="username">
+                <label class="field-label" for="loginPassword">Password</label>
+                <input id="loginPassword" type="password" placeholder="admin" autocomplete="current-password">
+                <button id="loginBtn" class="login-btn" type="button">Sign in</button>
+                <p id="loginError" class="login-error"></p>
+                <p class="auth-switch">Don't have an account? <a href="#" id="goToRegister">Register</a></p>
+            </form>
+            <form id="signupForm" class="auth-form" style="display:none;" onsubmit="return false;">
+                <label class="field-label" for="registerUsername">Username</label>
+                <input id="registerUsername" type="text" placeholder="admin" autocomplete="username">
+                <label class="field-label" for="registerPassword">Password</label>
+                <input id="registerPassword" type="password" placeholder="••••••••" autocomplete="new-password">
+                <label class="field-label" for="registerConfirmPassword">Confirm Password</label>
+                <input id="registerConfirmPassword" type="password" placeholder="••••••••" autocomplete="new-password">
+                <button id="registerBtn" class="login-btn" type="button">Sign up</button>
+                <p id="registerError" class="login-error"></p>
+                <p class="auth-switch">Already have an account? <a href="#" id="goToSignin">Sign in</a></p>
+            </form>
         </div>
     </div>
 
@@ -205,6 +225,6 @@
     <script src="/vendor/codemirror/addon/fold/brace-fold.js"></script>
     <script src="/vendor/codemirror/addon/hint/show-hint.js"></script>
     <script src="/vendor/codemirror/addon/hint/anyword-hint.js"></script>
-    <script src="/js/app.js?v=5"></script>
+    <script src="/js/app.js?v=7"></script>
 </body>
 </html>
