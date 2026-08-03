@@ -10,6 +10,7 @@ import time
 import uuid
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 from pythonjsonlogger import jsonlogger
 from collections import defaultdict, deque
 
@@ -23,10 +24,6 @@ from agent import (
     generate_full_test_suite,
     analyze_github_repository,
     analyze_debug_issue,
-    build_repository_context,
-    retrieve_repository_context,
-    propose_fix_and_verify,
-    run_eval_suite,
     LLM,
 )
 
@@ -68,6 +65,7 @@ class RepositoryAnalysisResponse(BaseModel):
     repository: dict
     filesAnalyzed: list[dict]
     javaStaticFindings: list[dict]
+    repoMetrics: dict
     aiSummary: str
 
 
@@ -81,33 +79,6 @@ class DebugResponse(BaseModel):
     diagnosis: str
 
 
-class RepositoryContextRequest(BaseModel):
-    repoUrl: str
-    query: str
-    branch: str | None = None
-    maxFiles: int = 15
-    topK: int = 5
-    githubToken: str | None = None
-
-
-class RepositoryContextResponse(BaseModel):
-    repository: dict
-    query: str
-    contexts: list[dict]
-
-
-class FixRequest(BaseModel):
-    code: str
-    errorLog: str
-    language: str = "java"
-
-
-class FixResponse(BaseModel):
-    diagnosis: str
-    fixedCode: str
-    verification: dict
-
-
 # Setup Structured Logging
 logger = logging.getLogger("codecritic")
 logHandler = logging.StreamHandler()
@@ -116,7 +87,32 @@ logHandler.setFormatter(formatter)
 logger.addHandler(logHandler)
 logger.setLevel(logging.INFO)
 
-app = FastAPI(title="CodeCritic Agent", version="0.1.0")
+async def wait_for_java_server():
+    import httpx
+    java_url = os.getenv("JAVA_SERVER_URL", "http://localhost:8080/api")
+    java_base = java_url[:-4] if java_url.endswith("/api") else java_url
+    logger.info("Startup check: Waiting for Java server", extra={"javaUrl": java_base, "requestId": "system"})
+    for i in range(10):
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(f"{java_base}/health", timeout=2.0)
+                if resp.status_code == 200:
+                    logger.info("Java server is UP", extra={"requestId": "system"})
+                    return
+        except Exception:
+            pass
+        logger.warn("Java server not ready, retrying...", extra={"attempt": i + 1, "requestId": "system"})
+        await asyncio.sleep(2)
+    logger.error("Java server failed to become ready in time", extra={"requestId": "system"})
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await wait_for_java_server()
+    yield
+
+
+app = FastAPI(title="CodeCritic Agent", version="0.1.0", lifespan=lifespan)
 cors_origins = [origin.strip() for origin in os.getenv("CORS_ALLOW_ORIGINS", "*").split(",") if origin.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -129,7 +125,6 @@ app.add_middleware(
 MAX_REQUEST_BYTES = int(os.getenv("MAX_REQUEST_BYTES", "1500000"))
 RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "60"))
 RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
-API_AUTH_TOKEN = os.getenv("API_AUTH_TOKEN", "").strip()
 
 REQUEST_TIMES_BY_IP: dict[str, deque[float]] = defaultdict(deque)
 METRICS: dict[str, object] = {
@@ -140,10 +135,6 @@ METRICS: dict[str, object] = {
     "latencyByEndpointMs": defaultdict(list),
 }
 
-
-def _auth_required(path: str) -> bool:
-    public = {"/health", "/ready", "/metrics"}
-    return path not in public
 
 def is_java_code(code: str) -> bool:
     """Basic heuristic to detect if the code is Java."""
@@ -189,15 +180,6 @@ async def production_middleware(request: Request, call_next):
             headers={"X-Request-Id": request_id},
         )
     queue.append(now)
-
-    if API_AUTH_TOKEN and _auth_required(endpoint):
-        token = request.headers.get("x-api-token", "")
-        if token != API_AUTH_TOKEN:
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Unauthorized", "requestId": request_id},
-                headers={"X-Request-Id": request_id},
-            )
 
     response = await call_next(request)
     latency_ms = int((time.time() - started) * 1000)
@@ -252,7 +234,6 @@ def metrics() -> dict:
         "latencyByEndpoint": latency_summary,
         "rateLimit": {"requests": RATE_LIMIT_REQUESTS, "windowSeconds": RATE_LIMIT_WINDOW_SECONDS},
         "maxRequestBytes": MAX_REQUEST_BYTES,
-        "authEnabled": bool(API_AUTH_TOKEN),
     }
 
 
@@ -268,24 +249,6 @@ def ready() -> dict:
         "llmConnectivity": llm_check,
     }
 
-
-@app.on_event("startup")
-async def startup_check():
-    import httpx
-    java_url = os.getenv("JAVA_SERVER_URL", "http://localhost:8080/api")
-    logger.info("Startup check: Waiting for Java server", extra={"javaUrl": java_url, "requestId": "system"})
-    for i in range(10):
-        try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(f"{java_url}/health", timeout=2.0)
-                if resp.status_code == 200:
-                    logger.info("Java server is UP", extra={"requestId": "system"})
-                    return
-        except Exception:
-            pass
-        logger.warn("Java server not ready, retrying...", extra={"attempt": i + 1, "requestId": "system"})
-        await asyncio.sleep(2)
-    logger.error("Java server failed to become ready in time", extra={"requestId": "system"})
 
 @app.post("/review", response_model=ReviewResponse | ReviewErrorResponse)
 def review(request: ReviewRequest) -> ReviewResponse | ReviewErrorResponse:
@@ -336,41 +299,5 @@ def debug_code(request: DebugRequest) -> DebugResponse | ReviewErrorResponse:
             language=request.language,
         )
         return DebugResponse(diagnosis=diagnosis)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-@app.post("/repository-context", response_model=RepositoryContextResponse | ReviewErrorResponse)
-def repository_context(request: RepositoryContextRequest) -> RepositoryContextResponse | ReviewErrorResponse:
-    try:
-        context = build_repository_context(
-            repo_url=request.repoUrl,
-            branch=request.branch,
-            max_files=request.maxFiles,
-            github_token=request.githubToken,
-        )
-        docs = retrieve_repository_context(context["documents"], request.query, top_k=max(1, min(request.topK, 10)))
-        contexts = [
-            {"path": doc["path"], "language": doc["language"], "snippet": str(doc["content"])[:1400]}
-            for doc in docs
-        ]
-        return RepositoryContextResponse(repository=context["repository"], query=request.query, contexts=contexts)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-@app.post("/propose-fix", response_model=FixResponse | ReviewErrorResponse)
-def propose_fix(request: FixRequest) -> FixResponse | ReviewErrorResponse:
-    try:
-        result = propose_fix_and_verify(code=request.code, error_log=request.errorLog, language=request.language)
-        return FixResponse(**result)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-@app.post("/run-evals")
-def run_evals() -> dict:
-    try:
-        return run_eval_suite()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

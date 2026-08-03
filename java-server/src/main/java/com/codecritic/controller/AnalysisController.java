@@ -1,6 +1,7 @@
 package com.codecritic.controller;
 
 import com.codecritic.dto.*;
+import com.codecritic.metrics.AnalysisMetrics;
 import com.codecritic.service.AnalysisService;
 import io.github.learnerview.simplydone4j.dto.JobSubmissionResponse;
 import org.slf4j.Logger;
@@ -26,9 +27,16 @@ public class AnalysisController {
     private static final Logger log = LoggerFactory.getLogger(AnalysisController.class);
 
     private final AnalysisService analysisService;
+    private final AnalysisMetrics metrics;
 
-    public AnalysisController(AnalysisService analysisService) {
+    public AnalysisController(AnalysisService analysisService, AnalysisMetrics metrics) {
         this.analysisService = analysisService;
+        this.metrics = metrics;
+    }
+
+    @GetMapping("/metrics")
+    public ResponseEntity<Map<String, Object>> metrics() {
+        return ResponseEntity.ok(metrics.snapshot());
     }
 
     @PostMapping("/complexity")

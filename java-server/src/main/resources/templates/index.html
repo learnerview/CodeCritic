@@ -3,62 +3,208 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CodeCritic - AI Code Engineering Workspace</title>
-    <link rel="stylesheet" href="/css/style.css">
+    <title>CodeCritic - AI Code Review Dashboard</title>
+    <link rel="stylesheet" href="/vendor/codemirror/lib/codemirror.css">
+    <link rel="stylesheet" href="/vendor/codemirror/addon/fold/foldgutter.css">
+    <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
+    <link rel="stylesheet" href="/vendor/codemirror/theme/dracula.css">
+    <link rel="stylesheet" href="/css/style.css?v=5">
 </head>
 <body>
     <div class="orb orb-a"></div>
     <div class="orb orb-b"></div>
 
-    <main class="shell">
-        <section class="hero">
+    <div id="loginOverlay" class="login-overlay" style="display:none;">
+        <div class="login-card">
             <p class="eyebrow">CodeCritic</p>
-            <h1>AI code review that works in the real world.</h1>
-            <p class="lede">
-                One compact system for snippet review, repository-wide analysis, and production debugging.
-            </p>
-            <div class="actions">
-                <a class="nav-link" href="/review.html">Snippet Review</a>
-                <a class="nav-link" href="/repository.html">Repository Analysis</a>
-                <a class="nav-link" href="/debug.html">Debug Assistant</a>
+            <h1 class="login-title">Sign in</h1>
+            <p class="lede login-lede">Use your credentials to access the workspace.</p>
+            <label class="field-label" for="loginUsername">Username</label>
+            <input id="loginUsername" type="text" placeholder="admin" autocomplete="username">
+            <label class="field-label" for="loginPassword">Password</label>
+            <input id="loginPassword" type="password" placeholder="admin" autocomplete="current-password">
+            <button id="loginBtn" class="login-btn">Sign in</button>
+            <p id="loginError" class="login-error"></p>
+        </div>
+    </div>
+
+    <nav class="topnav">
+        <div class="brand">CodeCritic</div>
+        <div class="tabs" id="mainTabs">
+            <button class="tab active" data-tab="review">Review</button>
+            <button class="tab" data-tab="repository">Repository</button>
+            <button class="tab" data-tab="debug">Debug</button>
+        </div>
+        <div class="user-chip">
+            <span id="userName">admin</span>
+            <button id="logoutBtn" class="ghost small">Logout</button>
+        </div>
+    </nav>
+
+    <main class="shell">
+
+        <section id="tab-review" class="tab-view active">
+            <div class="hero">
+                <p class="eyebrow">Snippet Review</p>
+                <h1>Analyze Java snippets with full AI test generation.</h1>
+                <p class="lede">Cyclomatic complexity, bug detection, JUnit scaffolds and an AI-synthesized review.</p>
+                <div class="metrics">
+                    <div class="metric">
+                        <span id="cyclomaticMetric">0</span>
+                        <label>Cyclomatic</label>
+                    </div>
+                    <div class="metric">
+                        <span id="cognitiveMetric">0</span>
+                        <label>Cognitive</label>
+                    </div>
+                    <div class="metric">
+                        <span id="bugMetric">0</span>
+                        <label>Bugs</label>
+                    </div>
+                </div>
+            </div>
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>Java Source</h2>
+                    <button id="analyzeBtn" class="ghost">Run Full Analysis</button>
+                </div>
+                <div class="editor-container">
+                    <textarea id="codeInput" style="display:block;">public class Sample {
+    public int divide(int a, int b) {
+        return a / b;
+    }
+    public String getName(Object obj) {
+        return obj.toString();
+    }
+    public int classify(int x) {
+        if (x > 10 && x < 100) {
+            return 1;
+        } else if (x <= 0) {
+            return -1;
+        }
+        return 0;
+    }
+}</textarea>
+                </div>
+                <div class="grid">
+                    <label>Class Name
+                        <input id="className" type="text" placeholder="Sample">
+                    </label>
+                    <label>Method Name
+                        <input id="methodName" type="text" placeholder="divide">
+                    </label>
+                    <label>Parameters
+                        <input id="parameters" type="text" placeholder="int a, int b">
+                    </label>
+                </div>
+                <div class="actions">
+                    <button data-action="complexity">Complexity</button>
+                    <button data-action="bugs">Find Bugs</button>
+                    <button data-action="test">Test Template</button>
+                    <button data-action="full-test">Full AI Tests</button>
+                    <button data-action="review" class="ghost">AI Review</button>
+                </div>
+            </div>
+            <div class="panel results">
+                <div class="panel-header">
+                    <h2>Results</h2>
+                    <div class="panel-actions">
+                        <span id="statusText">Idle</span>
+                        <button class="ghost small" data-copy-target="output" title="Copy results to clipboard">Copy</button>
+                    </div>
+                </div>
+                <pre id="output">Run an analysis to see results here.</pre>
             </div>
         </section>
 
-        <section class="panel">
-            <div class="panel-header">
-                <h2>Modules</h2>
+        <section id="tab-repository" class="tab-view">
+            <div class="hero">
+                <p class="eyebrow">Repository Analysis</p>
+                <h1>Analyze GitHub repositories with AI + static insights.</h1>
+                <p class="lede">Public repos work directly; add a GitHub token for private repositories.</p>
             </div>
-            <div class="feature-grid">
-                <article class="feature-card">
-                    <h3>Snippet Review</h3>
-                    <p>Complexity + bug detection + full AI-generated tests + review narrative.</p>
-                    <a class="nav-link" href="/review.html">Open Workspace</a>
-                </article>
-                <article class="feature-card">
-                    <h3>GitHub Repository Analyzer</h3>
-                    <p>Analyze online repositories, detect hotspots, and generate an implementation roadmap.</p>
-                    <a class="nav-link" href="/repository.html">Open Workspace</a>
-                </article>
-                <article class="feature-card">
-                    <h3>Debug Assistant</h3>
-                    <p>Paste failing logs and source to get root cause, fix strategy, and patch guidance.</p>
-                    <a class="nav-link" href="/debug.html">Open Workspace</a>
-                </article>
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>Repository Input</h2>
+                    <button id="repoAnalyzeBtn" class="ghost">Analyze Repository</button>
+                </div>
+                <div class="grid grid-2">
+                    <label>Repository URL
+                        <input id="repoUrl" type="text" placeholder="https://github.com/owner/repo">
+                    </label>
+                    <label>Branch (optional)
+                        <input id="repoBranch" type="text" placeholder="main">
+                    </label>
+                    <label>Max files
+                        <input id="repoMaxFiles" type="number" min="1" max="30" value="15">
+                    </label>
+                    <label>GitHub token (optional)
+                        <input id="repoToken" type="password" placeholder="ghp_xxx">
+                    </label>
+                </div>
+            </div>
+            <div class="panel results">
+                <div class="panel-header">
+                    <h2>Repository Report</h2>
+                    <div class="panel-actions">
+                        <span id="repoStatusText">Idle</span>
+                        <button class="ghost small" data-copy-target="repoOutput" title="Copy repository report to clipboard">Copy</button>
+                    </div>
+                </div>
+                <pre id="repoOutput">Run repository analysis to see architecture, hotspots, and roadmap.</pre>
             </div>
         </section>
 
-        <section class="panel results">
-            <div class="panel-header">
-                <h2>Tech highlights</h2>
+        <section id="tab-debug" class="tab-view">
+            <div class="hero">
+                <p class="eyebrow">Debug Assistant</p>
+                <h1>Diagnose production issues with AI.</h1>
+                <p class="lede">Paste error logs and the relevant source for root cause analysis and fix guidance.</p>
             </div>
-            <pre>1) Java AST + heuristics for deterministic checks
-2) Groq LLM with optional LangChain orchestration
-3) AI-generated complete JUnit suite generation
-4) Public/private GitHub repository ingestion
-5) Debugging assistant for real production incidents</pre>
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>Incident Context</h2>
+                    <button id="debugAnalyzeBtn" class="ghost">Run Diagnosis</button>
+                </div>
+                <label class="field-label" for="debugLanguage">Language</label>
+                <input id="debugLanguage" type="text" value="java" placeholder="java">
+                <label class="field-label">Source Code</label>
+                <div class="editor-container">
+                    <textarea id="debugCodeInput" style="display:block;">public class A {
+    int f(int x) {
+        return 10 / x;
+    }
+}</textarea>
+                </div>
+                <label class="field-label" for="debugErrorInput">Error Logs / Stacktrace</label>
+                <textarea id="debugErrorInput" style="min-height:150px;" spellcheck="false" placeholder="Paste error logs here..."></textarea>
+            </div>
+            <div class="panel results">
+                <div class="panel-header">
+                    <h2>AI Diagnosis</h2>
+                    <div class="panel-actions">
+                        <span id="debugStatusText">Idle</span>
+                        <button class="ghost small" data-copy-target="debugOutput" title="Copy diagnosis to clipboard">Copy</button>
+                    </div>
+                </div>
+                <pre id="debugOutput">Provide source and logs to see the AI's diagnosis and fix strategy.</pre>
+            </div>
         </section>
+
     </main>
 
-    <script src="/js/app.js"></script>
+    <script src="/vendor/codemirror/lib/codemirror.js"></script>
+    <script src="/vendor/codemirror/mode/clike/clike.js"></script>
+    <script src="/vendor/codemirror/addon/edit/matchbrackets.js"></script>
+    <script src="/vendor/codemirror/addon/edit/closebrackets.js"></script>
+    <script src="/vendor/codemirror/addon/edit/closetag.js"></script>
+    <script src="/vendor/codemirror/addon/comment/comment.js"></script>
+    <script src="/vendor/codemirror/addon/selection/active-line.js"></script>
+    <script src="/vendor/codemirror/addon/fold/foldcode.js"></script>
+    <script src="/vendor/codemirror/addon/fold/foldgutter.js"></script>
+    <script src="/vendor/codemirror/addon/fold/brace-fold.js"></script>
+    <script src="/vendor/codemirror/addon/hint/show-hint.js"></script>
+    <script src="/vendor/codemirror/addon/hint/anyword-hint.js"></script>
+    <script src="/js/app.js?v=5"></script>
 </body>
 </html>

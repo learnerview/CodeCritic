@@ -8,32 +8,17 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.GetMapping;
 
-import java.util.concurrent.TimeUnit;
-
 @Controller
 public class FrontendController {
 
-    @GetMapping(value = { "/", "/index.html" }, produces = MediaType.TEXT_HTML_VALUE)
-    public ResponseEntity<Resource> index() {
+    // The dashboard is a single-page app; every page route serves it and the
+    // client shows the matching tab (Review / Repository / Debug).
+    @GetMapping(value = { "/", "/index.html", "/review", "/review.html",
+            "/repository", "/repository.html", "/debug", "/debug.html" }, produces = MediaType.TEXT_HTML_VALUE)
+    public ResponseEntity<Resource> dashboard() {
         return resourceResponse("templates/index.html", MediaType.TEXT_HTML);
     }
 
-    @GetMapping(value = { "/review", "/review.html" }, produces = MediaType.TEXT_HTML_VALUE)
-    public ResponseEntity<Resource> reviewPage() {
-        return resourceResponse("templates/review.html", MediaType.TEXT_HTML);
-    }
-
-    @GetMapping(value = { "/repository", "/repository.html" }, produces = MediaType.TEXT_HTML_VALUE)
-    public ResponseEntity<Resource> repositoryPage() {
-        return resourceResponse("templates/repository.html", MediaType.TEXT_HTML);
-    }
-
-    @GetMapping(value = { "/debug", "/debug.html" }, produces = MediaType.TEXT_HTML_VALUE)
-    public ResponseEntity<Resource> debugPage() {
-        return resourceResponse("templates/debug.html", MediaType.TEXT_HTML);
-    }
-
-    // Explicitly serving CSS and JS from their subdirectories for robustness
     @GetMapping(value = "/css/style.css", produces = "text/css")
     public ResponseEntity<Resource> style() {
         return resourceResponse("static/css/style.css", MediaType.valueOf("text/css"));
@@ -49,9 +34,10 @@ public class FrontendController {
         if (!resource.exists()) {
             return ResponseEntity.notFound().build();
         }
+        // HTML/JS/CSS change with every deploy: never serve stale copies.
         return ResponseEntity.ok()
                 .contentType(contentType)
-                .cacheControl(CacheControl.maxAge(1, TimeUnit.HOURS).cachePublic())
+                .cacheControl(CacheControl.noCache())
                 .body(resource);
     }
 }

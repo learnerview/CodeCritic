@@ -1,9 +1,12 @@
 package com.codecritic.controller;
 
 import com.codecritic.dto.ComplexityResponse;
+import com.codecritic.metrics.AnalysisMetrics;
+import com.codecritic.security.JwtTokenProvider;
 import com.codecritic.service.AnalysisService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
@@ -23,6 +26,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * - It is intentionally small and deterministic so it can run quickly in CI.
  */
 @WebMvcTest(AnalysisController.class)
+@AutoConfigureMockMvc(addFilters = false)
 class AnalysisControllerTest {
 
     @Autowired
@@ -30,6 +34,12 @@ class AnalysisControllerTest {
 
     @MockBean
     private AnalysisService analysisService;
+
+    @MockBean
+    private JwtTokenProvider jwtTokenProvider;
+
+    @MockBean
+    private AnalysisMetrics metrics;
 
     @Test
     void complexityEndpointReturnsMetrics() throws Exception {

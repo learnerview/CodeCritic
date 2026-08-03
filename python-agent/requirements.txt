@@ -4,7 +4,5 @@ fastapi
 uvicorn
 python-dotenv
 tenacity
-langchain-core
-langchain-groq
 python-json-logger
 httpx

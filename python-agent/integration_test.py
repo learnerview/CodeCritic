@@ -1,4 +1,4 @@
-from agent import get_complexity, find_bugs, generate_full_test_suite, run_eval_suite, LLM
+from agent import get_complexity, find_bugs, generate_full_test_suite, LLM
 
 
 SAMPLE = '''public class Calculator {
@@ -33,10 +33,6 @@ def run():
         assert '@Test' in generated_tests, 'Expected JUnit @Test methods in generated test suite'
     else:
         print('Skipping LLM full test generation check: no LLM key configured')
-
-    eval_result = run_eval_suite()
-    print('Eval suite summary:', eval_result.get('summary'))
-    assert eval_result.get('summary', {}).get('bugDetectionPassRate', 0) >= 0.5, 'Expected bug detection pass rate >= 0.5'
 
     print('Integration test succeeded')
 

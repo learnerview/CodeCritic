@@ -1,35 +1,45 @@
+server:
+  port: ${PORT:8080}
+  # Render free tier = 512 MB RAM: cap Tomcat threads so stack memory stays small.
+  tomcat:
+    threads:
+      max: ${TOMCAT_MAX_THREADS:100}
+      min-spare: 4
+
 codecritic:
-  api:
-    auth-token: ${API_AUTH_TOKEN:}
+  auth:
+    username: ${AUTH_USERNAME:admin}
+    password: ${AUTH_PASSWORD:admin}
+  jwt:
+    secret: ${JWT_SECRET:codecritic-demo-secret-key-change-me-in-production-0123456789}
+    expiration-ms: ${JWT_EXPIRATION_MS:86400000}
+    issuer: codecritic
   cors:
     allowed-origins: ${CORS_ALLOW_ORIGINS:*}
-  analysis:
-    job:
-      max-attempts: 3
-      timeout-seconds: 60
-      priority: NORMAL
 
 spring:
   servlet:
     multipart:
       max-file-size: 1MB
       max-request-size: 2MB
-  data:
-    redis:
-      host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:6379}
 
+# Redis is configured in code (RedisConfig) from REDIS_URL; fallback is
+# redis://localhost:6379 for local development.
 simplydone4j:
+  enabled: ${SIMPLYDONE4J_ENABLED:true}
   key-prefix: codecritic
   ttl-days: 7
   idempotency-ttl-hours: 2
   scheduler:
+    enabled: ${SIMPLYDONE4J_SCHEDULER_ENABLED:false}
     polling-interval-ms: 1000
     queue-prefix: "codecritic:queue"
     weights:
       high: 70
       normal: 20
       low: 10
+  monitoring:
+    enabled: ${SIMPLYDONE4J_MONITORING_ENABLED:false}
   rate-limit:
     requests-per-minute: 60
     window-seconds: 60
@@ -42,11 +52,11 @@ simplydone4j:
     retry-promoter-interval-ms: 5000
     lease-reaper-interval-ms: 10000
   queue:
-    max-depth: 5000
+    max-depth: ${SIMPLYDONE4J_QUEUE_MAX_DEPTH:5000}
   executor:
-    core-pool-size: 2
-    max-pool-size: 4
-    queue-capacity: 50
+    core-pool-size: ${SIMPLYDONE4J_EXECUTOR_CORE_POOL_SIZE:2}
+    max-pool-size: ${SIMPLYDONE4J_EXECUTOR_MAX_POOL_SIZE:4}
+    queue-capacity: ${SIMPLYDONE4J_EXECUTOR_QUEUE_CAPACITY:50}
     keep-alive-seconds: 60
     default-timeout-seconds: 30
 

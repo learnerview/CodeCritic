@@ -1,9 +1,18 @@
 package com.codecritic.service.impl;
 
+import com.codecritic.analysis.impl.CachedSpotBugsBugDetector;
+import com.codecritic.analysis.impl.CompositeBugDetector;
+import com.codecritic.analysis.impl.JavaParserComplexityAnalyzer;
+import com.codecritic.analysis.impl.JavaParserTestGenerator;
+import com.codecritic.analysis.impl.PatternBugDetector;
+import com.codecritic.analysis.impl.SpotBugsBugDetector;
+import com.codecritic.analysis.impl.SpotBugsRunner;
 import com.codecritic.dto.BugReport;
 import com.codecritic.dto.ComplexityResponse;
 import com.codecritic.dto.TestGenerationResponse;
-import io.github.learnerview.simplydone4j.service.JobSubmissionService;
+import com.codecritic.job.JobCoordinator;
+import com.codecritic.metrics.AnalysisMetrics;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -11,7 +20,20 @@ import static org.mockito.Mockito.mock;
 
 public class AnalysisServiceImplTest {
 
-    private final AnalysisServiceImpl service = new AnalysisServiceImpl(mock(JobSubmissionService.class));
+    private AnalysisServiceImpl service;
+
+    @BeforeEach
+    void setUp() {
+        service = new AnalysisServiceImpl(
+                new JavaParserComplexityAnalyzer(),
+                new CompositeBugDetector(
+                        new PatternBugDetector(),
+                        new CachedSpotBugsBugDetector(
+                                new SpotBugsBugDetector(new SpotBugsRunner()), new AnalysisMetrics())),
+                new JavaParserTestGenerator(),
+                mock(JobCoordinator.class),
+                new AnalysisMetrics());
+    }
 
     @Test
     public void calculateComplexity_simpleIf_returnsExpected() {
@@ -44,4 +66,3 @@ public class AnalysisServiceImplTest {
         assertTrue(junit.contains("obj.add("));
     }
 }
-

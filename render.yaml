@@ -1,0 +1,80 @@
+# Render Blueprint — CodeCritic on the free tier.
+#
+# Region "singapore" is the closest Render region to India (Render has no
+# Mumbai region). Free web services get 512 MB RAM / 0.1 CPU and spin down
+# after 15 minutes of inactivity.
+#
+# Both services are plain Docker builds, so the exact local setup (java-server
+# and python-agent Dockerfiles) is what runs in production. A Redis private
+# service is included to support the asynchronous job queue on the free tier.
+envVarGroups:
+  - name: codecritic-auth
+    envVars:
+      - key: AUTH_USERNAME
+        value: admin
+      - key: AUTH_PASSWORD
+        value: admin
+      - key: JWT_SECRET
+        generateValue: true
+
+services:
+  - type: pserv
+    name: codecritic-redis
+    runtime: image
+    image:
+      url: redis:7-alpine
+    region: singapore
+    plan: free
+
+  - type: web
+    name: codecritic-java
+    runtime: docker
+    region: singapore
+    plan: free
+    dockerContext: .
+    dockerfilePath: java-server/Dockerfile
+    envVars:
+      - fromGroup: codecritic-auth
+      - key: PYTHON_AGENT_URL
+        value: https://codecritic-python.onrender.com
+      - key: SIMPLYDONE4J_ENABLED
+        value: "true"
+      # Redis enabled for Render deployment using the private service.
+      - key: SIMPLYDONE4J_SCHEDULER_ENABLED
+        value: "true"
+      - key: SIMPLYDONE4J_MONITORING_ENABLED
+        value: "true"
+      - key: SIMPLYDONE4J_EXECUTOR_CORE_POOL_SIZE
+        value: "1"
+      - key: SIMPLYDONE4J_EXECUTOR_MAX_POOL_SIZE
+        value: "2"
+      - key: SIMPLYDONE4J_EXECUTOR_QUEUE_CAPACITY
+        value: "20"
+      - key: REDIS_URL
+        value: redis://codecritic-redis:6379
+      - key: CORS_ALLOW_ORIGINS
+        value: "*"
+    healthCheckPath: /health
+
+  - type: web
+    name: codecritic-python
+    runtime: docker
+    region: singapore
+    plan: free
+    dockerContext: python-agent
+    dockerfilePath: python-agent/Dockerfile
+    envVars:
+      - fromGroup: codecritic-auth
+      - key: JAVA_SERVER_URL
+        value: https://codecritic-java.onrender.com/api
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: CORS_ALLOW_ORIGINS
+        value: "*"
+      - key: MAX_REQUEST_BYTES
+        value: "1500000"
+    healthCheckPath: /health

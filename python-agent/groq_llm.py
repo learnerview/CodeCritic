@@ -1,13 +1,20 @@
 import os
 import requests
-from tenacity import retry, stop_after_attempt, wait_exponential
+from requests.exceptions import ConnectionError, HTTPError, Timeout
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
-try:
-    from langchain_groq import ChatGroq
-    from langchain_core.messages import HumanMessage, SystemMessage
-    LANGCHAIN_AVAILABLE = True
-except Exception:
-    LANGCHAIN_AVAILABLE = False
+
+def _is_retryable(exc: Exception) -> bool:
+    """Retry only transient failures: network errors, 429 and 5xx responses.
+
+    Auth/validation errors (400/401/403) are never fixed by retrying, so
+    they fail fast instead of burning three attempts.
+    """
+    if isinstance(exc, (ConnectionError, Timeout)):
+        return True
+    if isinstance(exc, HTTPError) and exc.response is not None:
+        return exc.response.status_code in (429, 500, 502, 503, 504)
+    return False
 
 
 class GroqLLM:
@@ -45,13 +52,12 @@ class GroqLLM:
         self.openai_key = openai_key or os.getenv("OPENAI_API_KEY")
         self.groq_model = groq_model or os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
         self.openai_model = openai_model or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-        self.groq_use_langchain = os.getenv("GROQ_USE_LANGCHAIN", "true").lower() in {"1", "true", "yes"}
         self.groq_base_url = groq_base_url or os.getenv(
             "GROQ_BASE_URL", "https://api.groq.com/openai/v1/chat/completions"
         )
-        self.timeout = int(os.getenv("LLM_TIMEOUT_SECONDS", "30"))
+        self.timeout = int(os.getenv("LLM_TIMEOUT_SECONDS", "60"))
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
+    @retry(retry=retry_if_exception(_is_retryable), stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
     def complete(self, prompt: str, max_tokens: int = 512) -> str:
         """Return a text completion for `prompt`.
 
@@ -78,8 +84,6 @@ class GroqLLM:
             "openaiConfigured": bool(self.openai_key),
             "groqModel": self.groq_model,
             "openaiModel": self.openai_model,
-            "langchainAvailable": LANGCHAIN_AVAILABLE,
-            "groqUseLangChain": self.groq_use_langchain,
             "groqBaseUrl": self.groq_base_url,
         }
 
@@ -97,8 +101,6 @@ class GroqLLM:
 
         Note: Groq response shapes may vary; this method attempts a few common access patterns.
         """
-        if self.groq_use_langchain and LANGCHAIN_AVAILABLE:
-            return self._groq_complete_langchain(prompt, max_tokens)
         url = self.groq_base_url
         headers = {"Authorization": f"Bearer {self.groq_key}", "Content-Type": "application/json"}
         body = {
@@ -124,24 +126,6 @@ class GroqLLM:
                     return "\n".join(map(str, out))
                 return str(out)
         return str(data)
-
-    def _groq_complete_langchain(self, prompt: str, max_tokens: int) -> str:
-        chat = ChatGroq(
-            model=self.groq_model,
-            api_key=self.groq_key,
-            max_tokens=max_tokens,
-            temperature=0.2,
-        )
-        response = chat.invoke(
-            [
-                SystemMessage(content="You are a helpful assistant."),
-                HumanMessage(content=prompt),
-            ]
-        )
-        content = getattr(response, "content", "")
-        if isinstance(content, list):
-            return "\n".join(str(item) for item in content)
-        return str(content)
 
     def _openai_complete(self, prompt: str, max_tokens: int) -> str:
         """Fallback to OpenAI Chat Completions API for environments without Groq.

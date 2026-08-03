@@ -43,6 +43,61 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 LLM = GroqLLM(groq_key=GROQ_API_KEY, openai_key=OPENAI_API_KEY)
 JAVA_SERVER = os.getenv("JAVA_SERVER_URL", "http://localhost:8080/api")
+AUTH_USERNAME = os.getenv("AUTH_USERNAME", "admin")
+AUTH_PASSWORD = os.getenv("AUTH_PASSWORD", "admin")
+
+# Cached JWT for Java server calls; refreshed lazily on expiry or 401.
+_java_token: Optional[str] = None
+_java_token_expires_at: float = 0.0
+
+
+def _java_auth_token() -> str:
+    """Return a cached JWT for the Java server, logging in when needed."""
+    global _java_token, _java_token_expires_at
+    now = time.time()
+    if _java_token and now < _java_token_expires_at:
+        return _java_token
+    resp = requests.post(
+        f"{JAVA_SERVER}/auth/login",
+        json={"username": AUTH_USERNAME, "password": AUTH_PASSWORD},
+        timeout=45,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    token = data.get("token")
+    if not token:
+        raise RuntimeError("Java server login returned no token")
+    _java_token = token
+    expires_ms = int(os.getenv("JWT_EXPIRATION_MS", "86400000"))
+    cache_ttl = max(60, int(expires_ms / 1000) - 60)
+    _java_token_expires_at = now + min(cache_ttl, 3600)
+    return _java_token
+
+
+def _java_request(method: str, path: str, *, payload: dict, timeout: int = 45) -> requests.Response:
+    """Send an authenticated request to the Java server, refreshing the token once on 401.
+
+    Timeout is generous on purpose: on Render's free tier the Java service
+    sleeps after 15 minutes of inactivity and can take 30-60s to cold-boot.
+    """
+    global _java_token
+    resp = requests.request(
+        method,
+        f"{JAVA_SERVER}{path}",
+        json=payload,
+        headers={"Authorization": f"Bearer {_java_auth_token()}"},
+        timeout=timeout,
+    )
+    if resp.status_code == 401:
+        _java_token = None
+        resp = requests.request(
+            method,
+            f"{JAVA_SERVER}{path}",
+            json=payload,
+            headers={"Authorization": f"Bearer {_java_auth_token()}"},
+            timeout=timeout,
+        )
+    return resp
 
 
 class ComplexityRequest(BaseModel):
@@ -93,7 +148,7 @@ def get_complexity(code: str) -> ComplexityResponse:
     The wrapper returns typed `ComplexityResponse` objects and raises for HTTP errors.
     Keeping this small makes it easy to substitute a mocked implementation in tests.
     """
-    resp = requests.post(f"{JAVA_SERVER}/complexity", json={"code": code}, timeout=10)
+    resp = _java_request("POST", "/complexity", payload={"code": code})
     resp.raise_for_status()
     return ComplexityResponse(**resp.json())
 
@@ -104,7 +159,7 @@ def find_bugs(code: str) -> BugReport:
     Returns a `BugReport` DTO. The Java side combines pattern-based detectors and a
     best-effort SpotBugs run if SpotBugs is available in the runtime environment.
     """
-    resp = requests.post(f"{JAVA_SERVER}/bugs", json={"code": code}, timeout=10)
+    resp = _java_request("POST", "/bugs", payload={"code": code})
     resp.raise_for_status()
     return BugReport(**resp.json())
 
@@ -116,7 +171,7 @@ def generate_test(className: str, methodName: str, parameters: Optional[str], co
     a minimal, compilable JUnit 5 test template. The wrapper returns the typed DTO.
     """
     payload = {"className": className, "methodName": methodName, "parameters": parameters, "code": code}
-    resp = requests.post(f"{JAVA_SERVER}/generate-test", json=payload, timeout=10)
+    resp = _java_request("POST", "/generate-test", payload=payload)
     resp.raise_for_status()
     return TestGenerationResponse(**resp.json())
 
@@ -273,7 +328,7 @@ def build_repository_context(
 
     documents: List[dict[str, Any]] = []
     for file_path in files:
-        rel = str(file_path.relative_to(root))
+        rel = str(file_path.relative_to(root)).replace("\\", "/")
         text = file_path.read_text(encoding="utf-8", errors="ignore")
         documents.append(
             {
@@ -287,22 +342,6 @@ def build_repository_context(
         "repository": {"url": repo_url, "owner": owner, "name": repo, "branch": use_branch},
         "documents": documents,
     }
-
-
-def retrieve_repository_context(documents: list[dict[str, Any]], query: str, top_k: int = 5) -> list[dict[str, Any]]:
-    query_terms = {term for term in re.findall(r"[a-zA-Z_]{3,}", (query or "").lower())}
-    if not query_terms:
-        return documents[:top_k]
-
-    def score(doc: dict[str, Any]) -> tuple[int, int]:
-        content = str(doc.get("content", "")).lower()
-        path = str(doc.get("path", "")).lower()
-        hits = sum(1 for term in query_terms if term in content or term in path)
-        return (hits, int(doc.get("size", 0)))
-
-    ranked = sorted(documents, key=score, reverse=True)
-    selected = [doc for doc in ranked if score(doc)[0] > 0]
-    return (selected or ranked)[:top_k]
 
 
 def _parse_github_repo(repo_url: str) -> tuple[str, str]:
@@ -321,23 +360,18 @@ def _resolve_default_branch(owner: str, repo: str, token: Optional[str]) -> str:
     headers = {"Accept": "application/vnd.github+json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    response = requests.get(f"https://api.github.com/repos/{owner}/{repo}", headers=headers, timeout=30)
-    response.raise_for_status()
-    data = response.json()
-    return data.get("default_branch") or "main"
+    try:
+        response = requests.get(f"https://api.github.com/repos/{owner}/{repo}", headers=headers, timeout=30)
+        response.raise_for_status()
+        return response.json().get("default_branch") or "main"
+    except requests.RequestException:
+        return "main"
 
 
 def _download_github_archive(owner: str, repo: str, branch: str, token: Optional[str]) -> Path:
-    headers = {"Accept": "application/vnd.github+json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    archive_url = f"https://api.github.com/repos/{owner}/{repo}/zipball/{branch}"
-    response = requests.get(archive_url, headers=headers, timeout=60)
-    response.raise_for_status()
-
     temp_dir = Path(tempfile.mkdtemp(prefix="codecritic-repo-"))
     zip_path = temp_dir / "repo.zip"
-    zip_path.write_bytes(response.content)
+    zip_path.write_bytes(_download_zip_content(owner, repo, branch, token))
     with zipfile.ZipFile(zip_path, "r") as zf:
         zf.extractall(temp_dir)
 
@@ -345,6 +379,30 @@ def _download_github_archive(owner: str, repo: str, branch: str, token: Optional
     if not extracted_dirs:
         raise RuntimeError("Repository archive extraction failed")
     return extracted_dirs[0]
+
+
+def _download_zip_content(owner: str, repo: str, branch: str, token: Optional[str]) -> bytes:
+    """Download a repository zip, preferring codeload to avoid api.github.com rate limits.
+
+    Codeload is used for public repos; the API zipball endpoint remains the
+    fallback (and the path for private repos via the GitHub token).
+    """
+    if not token:
+        try:
+            resp = requests.get(
+                f"https://codeload.github.com/{owner}/{repo}/zip/refs/heads/{branch}", timeout=60
+            )
+            if resp.status_code == 200:
+                return resp.content
+        except requests.RequestException:
+            pass
+    headers = {"Accept": "application/vnd.github+json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    archive_url = f"https://api.github.com/repos/{owner}/{repo}/zipball/{branch}"
+    response = requests.get(archive_url, headers=headers, timeout=60)
+    response.raise_for_status()
+    return response.content
 
 
 def _collect_code_files(root: Path, max_files: int) -> List[Path]:
@@ -360,6 +418,99 @@ def _collect_code_files(root: Path, max_files: int) -> List[Path]:
             candidates.append(path)
     candidates.sort(key=lambda p: p.stat().st_size, reverse=True)
     return candidates[:max_files]
+
+
+def _format_repo_metrics(metrics: dict[str, Any]) -> str:
+    """Render the metrics map as compact, readable lines for the LLM prompt."""
+    lines: list[str] = []
+    scalars = [
+        "totalFiles", "javaFilesAnalyzed", "classCount", "methodCount",
+        "averageCyclomatic", "bugDensityPerFile", "totalBugFindings", "filesWithBugs",
+    ]
+    for key in scalars:
+        if key in metrics:
+            lines.append(f"- {key}: {metrics[key]}")
+    if metrics.get("complexityDistribution"):
+        lines.append("- complexityDistribution: " + ", ".join(
+            f"{k}={v}" for k, v in metrics["complexityDistribution"].items()))
+    for key in ("complexityHotspots", "largestFiles"):
+        entries = metrics.get(key) or []
+        if entries:
+            lines.append(f"- {key}:")
+            for entry in entries:
+                lines.append(f"    {entry}")
+    packages = metrics.get("topPackagesByFileCount") or {}
+    if packages:
+        lines.append("- topPackagesByFileCount: " + ", ".join(
+            f"{pkg}={count}" for pkg, count in packages.items()))
+    return "\n".join(lines) or "None computed."
+
+
+def _compute_repo_metrics(java_findings: list[dict], docs: list[dict]) -> dict[str, Any]:
+    """Derive deterministic repository-level metrics from per-file analysis results.
+
+    Purely local computation (no LLM): class/method counts, complexity
+    distribution, hotspots, largest files, bug density, and package breakdown.
+    """
+    java_docs = [d for d in docs if d.get("language") == ".java"]
+    analyzed = [f for f in java_findings if f.get("cyclomatic") is not None]
+    hotspots = sorted(analyzed, key=lambda f: f["cyclomatic"], reverse=True)[:5]
+    largest = sorted(docs, key=lambda d: d.get("size", 0), reverse=True)[:5]
+
+    buggy = [f for f in java_findings if f.get("bugCount", 0) > 0]
+    total_bugs = sum(f.get("bugCount", 0) for f in java_findings)
+
+    class_count = 0
+    method_count = 0
+    for doc in java_docs:
+        text = str(doc.get("content", ""))
+        class_count += len(re.findall(r"\bclass\s+\w+", text))
+        method_count += len(re.findall(
+            r"\b(?:public|private|protected)\s+(?:static\s+)?[\w<>\[\], ?]+\s+\w+\s*\(", text))
+
+    distribution = {"simple_1_2": 0, "moderate_3_7": 0, "complex_8_15": 0, "very_complex_16_plus": 0}
+    for f in analyzed:
+        cc = f["cyclomatic"]
+        if cc <= 2:
+            distribution["simple_1_2"] += 1
+        elif cc <= 7:
+            distribution["moderate_3_7"] += 1
+        elif cc <= 15:
+            distribution["complex_8_15"] += 1
+        else:
+            distribution["very_complex_16_plus"] += 1
+    distribution = {k: v for k, v in distribution.items()}
+
+    avg_cyclomatic = round(sum(f["cyclomatic"] for f in analyzed) / len(analyzed), 1) if analyzed else 0.0
+    bug_density = round(total_bugs / len(analyzed), 2) if analyzed else 0.0
+
+    packages: dict[str, int] = {}
+    for f in java_findings:
+        path = str(f.get("path", "")).replace("\\", "/")
+        parts = path.split("/")
+        if "java" in parts:
+            package = "/".join(parts[parts.index("java") + 1:-1]) or "(default)"
+        else:
+            package = "/".join(parts[:-1]) or "(default)"
+        packages[package] = packages.get(package, 0) + 1
+    top_packages = dict(sorted(packages.items(), key=lambda item: item[1], reverse=True)[:8])
+
+    return {
+        "totalFiles": len(docs),
+        "javaFilesAnalyzed": len(analyzed),
+        "classCount": class_count,
+        "methodCount": method_count,
+        "averageCyclomatic": avg_cyclomatic,
+        "bugDensityPerFile": bug_density,
+        "complexityDistribution": distribution,
+        "complexityHotspots": [
+            {"path": f["path"], "cyclomatic": f["cyclomatic"], "cognitive": f["cognitive"]} for f in hotspots
+        ],
+        "largestFiles": [{"path": d["path"], "sizeBytes": d.get("size", 0)} for d in largest],
+        "totalBugFindings": total_bugs,
+        "filesWithBugs": len(buggy),
+        "topPackagesByFileCount": top_packages,
+    }
 
 
 def analyze_github_repository(
@@ -408,6 +559,9 @@ def analyze_github_repository(
         if remaining_budget <= 0:
             break
 
+    repo_metrics = _compute_repo_metrics(java_findings, docs)
+    metrics_text = _format_repo_metrics(repo_metrics)
+
     summary_prompt = (
         "You are a staff engineer assessing production readiness of a code repository.\n"
         "Return concise markdown with:\n"
@@ -415,8 +569,10 @@ def analyze_github_repository(
         "2) Top risks (security/reliability/performance)\n"
         "3) Debuggability gaps\n"
         "4) Practical roadmap (smallest high-impact next steps)\n\n"
+        "Ground every claim in the metrics and static findings below; do not invent findings.\n\n"
         f"Repository: {repo_url} (branch: {repo_meta['branch']})\n"
         f"Inspected files: {len(per_file)}\n\n"
+        f"Repository metrics (deterministic):\n{metrics_text or 'None computed.'}\n\n"
         f"Java static findings: {java_findings}\n\n"
         "Source excerpts:\n"
         + "\n\n".join(combined_source)
@@ -426,117 +582,8 @@ def analyze_github_repository(
         "repository": repo_meta,
         "filesAnalyzed": per_file,
         "javaStaticFindings": java_findings,
+        "repoMetrics": repo_metrics,
         "aiSummary": ai_summary,
-    }
-
-
-def propose_fix_and_verify(code: str, error_log: str, language: str = "java") -> dict[str, Any]:
-    started_at = time.time()
-    diagnosis = analyze_debug_issue(code=code, error_log=error_log, language=language)
-    patch_prompt = (
-        "Return only fixed source code in a single markdown code block.\n"
-        "Fix the issue from the error log while preserving behavior.\n\n"
-        f"LANGUAGE: {language}\n"
-        f"ORIGINAL CODE:\n{code}\n\n"
-        f"ERROR LOG:\n{error_log}\n\n"
-        f"DIAGNOSIS:\n{diagnosis}\n"
-    )
-    patch_raw = LLM.complete(patch_prompt, max_tokens=2200)
-    fixed_code = _extract_markdown_code_block(patch_raw)
-    if not fixed_code:
-        raise RuntimeError("Failed to generate fixed code")
-
-    verification: dict[str, Any] = {"language": language, "checks": []}
-    if language.lower() == "java":
-        try:
-            before_bugs = find_bugs(code)
-            after_bugs = find_bugs(fixed_code)
-            verification["checks"].append(
-                {
-                    "name": "bug-count",
-                    "before": len(before_bugs.bugs),
-                    "after": len(after_bugs.bugs),
-                    "passed": len(after_bugs.bugs) <= len(before_bugs.bugs),
-                }
-            )
-        except Exception as exc:
-            verification["checks"].append({"name": "bug-count", "passed": False, "error": str(exc)})
-        try:
-            before_complexity = get_complexity(code)
-            after_complexity = get_complexity(fixed_code)
-            verification["checks"].append(
-                {
-                    "name": "complexity-regression",
-                    "beforeCyclomatic": before_complexity.cyclomaticComplexity,
-                    "afterCyclomatic": after_complexity.cyclomaticComplexity,
-                    "passed": after_complexity.cyclomaticComplexity <= before_complexity.cyclomaticComplexity + 2,
-                }
-            )
-        except Exception as exc:
-            verification["checks"].append({"name": "complexity-regression", "passed": False, "error": str(exc)})
-
-    passed_count = sum(1 for check in verification["checks"] if check.get("passed"))
-    verification["passed"] = bool(verification["checks"]) and passed_count == len(verification["checks"])
-    verification["durationMs"] = int((time.time() - started_at) * 1000)
-
-    return {
-        "diagnosis": diagnosis,
-        "fixedCode": fixed_code,
-        "verification": verification,
-    }
-
-
-def run_eval_suite() -> dict[str, Any]:
-    dataset_path = Path(__file__).resolve().parent / "evals_dataset.json"
-    if not dataset_path.exists():
-        raise RuntimeError("Missing evals dataset file: python-agent/evals_dataset.json")
-
-    import json
-
-    cases = json.loads(dataset_path.read_text(encoding="utf-8"))
-    if not isinstance(cases, list):
-        raise RuntimeError("Invalid evals dataset format")
-
-    results: list[dict[str, Any]] = []
-    for case in cases:
-        case_id = str(case.get("id", "unknown"))
-        code = str(case.get("code", ""))
-        expected_bug = str(case.get("expectedBugType", "")).strip()
-        has_llm = bool(LLM.provider_status().get("groqConfigured") or LLM.provider_status().get("openaiConfigured"))
-        case_result: dict[str, Any] = {"id": case_id, "expectedBugType": expected_bug}
-        try:
-            bugs = find_bugs(code)
-            types = {bug.type for bug in bugs.bugs}
-            bug_hit = expected_bug in types if expected_bug else True
-            case_result["bugDetectionPassed"] = bug_hit
-            case_result["detectedBugTypes"] = sorted(types)
-        except Exception as exc:
-            case_result["bugDetectionPassed"] = False
-            case_result["bugError"] = str(exc)
-
-        if has_llm:
-            try:
-                suite = generate_full_test_suite(code)
-                case_result["testGenerationPassed"] = "@Test" in suite and "class " in suite
-            except Exception as exc:
-                case_result["testGenerationPassed"] = False
-                case_result["testGenError"] = str(exc)
-        else:
-            case_result["testGenerationPassed"] = False
-            case_result["testGenError"] = "No LLM key configured"
-
-        results.append(case_result)
-
-    bug_passed = sum(1 for r in results if r.get("bugDetectionPassed"))
-    test_passed = sum(1 for r in results if r.get("testGenerationPassed"))
-    total = len(results)
-    return {
-        "summary": {
-            "totalCases": total,
-            "bugDetectionPassRate": (bug_passed / total) if total else 0.0,
-            "testGenerationPassRate": (test_passed / total) if total else 0.0,
-        },
-        "results": results,
     }
 
 

@@ -1,7 +1,7 @@
-version: '3.8'
 services:
   redis:
     image: redis:7-alpine
+    command: redis-server --maxmemory 450mb --maxmemory-policy allkeys-lru
     ports:
       - "6379:6379"
     healthcheck:
@@ -14,15 +14,18 @@ services:
 
   java-server:
     build:
-      context: ..
-      dockerfile: CodeCritic/java-server/Dockerfile
+      context: .
+      dockerfile: java-server/Dockerfile
     ports:
       - "8080:8080"
     environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - API_AUTH_TOKEN=${API_AUTH_TOKEN:-}
+      - REDIS_URL=redis://redis:6379
+      - AUTH_USERNAME=${AUTH_USERNAME:-admin}
+      - AUTH_PASSWORD=${AUTH_PASSWORD:-admin}
+      - JWT_SECRET=${JWT_SECRET:-codecritic-demo-secret-key-change-me-in-production-0123456789}
       - CORS_ALLOW_ORIGINS=${CORS_ALLOW_ORIGINS:-*}
+      - PYTHON_AGENT_URL=${PYTHON_AGENT_URL:-http://localhost:8000}
+      - SIMPLYDONE4J_SCHEDULER_ENABLED=${SIMPLYDONE4J_SCHEDULER_ENABLED:-true}
     depends_on:
       redis:
         condition: service_healthy
@@ -34,11 +37,11 @@ services:
     environment:
       - GROQ_API_KEY=${GROQ_API_KEY}
       - GROQ_MODEL=${GROQ_MODEL:-llama-3.3-70b-versatile}
-      - GROQ_USE_LANGCHAIN=${GROQ_USE_LANGCHAIN:-true}
       - JAVA_SERVER_URL=http://java-server:8080/api
+      - AUTH_USERNAME=${AUTH_USERNAME:-admin}
+      - AUTH_PASSWORD=${AUTH_PASSWORD:-admin}
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - CORS_ALLOW_ORIGINS=${CORS_ALLOW_ORIGINS:-*}
-      - API_AUTH_TOKEN=${API_AUTH_TOKEN}
       - RATE_LIMIT_REQUESTS=${RATE_LIMIT_REQUESTS:-60}
       - RATE_LIMIT_WINDOW_SECONDS=${RATE_LIMIT_WINDOW_SECONDS:-60}
       - MAX_REQUEST_BYTES=${MAX_REQUEST_BYTES:-1500000}
