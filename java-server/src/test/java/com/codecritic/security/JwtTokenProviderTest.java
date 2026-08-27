@@ -3,10 +3,13 @@ package com.codecritic.security;
 import com.codecritic.config.JwtProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.env.Environment;
 
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class JwtTokenProviderTest {
 
@@ -18,7 +21,9 @@ class JwtTokenProviderTest {
         properties.setSecret("test-secret-key-that-is-at-least-32-bytes-long-1234");
         properties.setExpirationMs(60_000L);
         properties.setIssuer("codecritic");
-        tokenProvider = new JwtTokenProvider(properties);
+        Environment env = mock(Environment.class);
+        when(env.getActiveProfiles()).thenReturn(new String[0]);
+        tokenProvider = new JwtTokenProvider(properties, env);
     }
 
     @Test

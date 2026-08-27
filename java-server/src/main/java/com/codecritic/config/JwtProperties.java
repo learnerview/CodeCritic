@@ -12,5 +12,12 @@ public class JwtProperties {
     private String secret;
     private long expirationMs = 86400000L;
     private String issuer = "codecritic";
-    private String[] permitAllPaths = {"/api/auth/login", "/health", "/ready", "/error"};
+    private String[] permitAllPaths = {
+            "/error",
+            "/health",
+            "/ready",
+            "/api/auth/login",
+            "/api/auth/register",
+            "/api/config"
+    };
 }

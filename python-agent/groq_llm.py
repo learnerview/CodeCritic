@@ -57,11 +57,10 @@ class GroqLLM:
         )
         self.timeout = int(os.getenv("LLM_TIMEOUT_SECONDS", "60"))
 
-    @retry(retry=retry_if_exception(_is_retryable), stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
     def complete(self, prompt: str, max_tokens: int = 512) -> str:
         """Return a text completion for `prompt`.
 
-        Tries Groq first, then OpenAI. Retries on transient failures.
+        Tries Groq first (with transient-failure retry), then OpenAI as fallback.
         """
         errors = []
         if self.groq_key:
@@ -96,6 +95,7 @@ class GroqLLM:
         except Exception as exc:
             return {"ok": False, "provider": "groq" if self.groq_key else "openai", "message": str(exc)}
 
+    @retry(retry=retry_if_exception(_is_retryable), stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
     def _groq_complete(self, prompt: str, max_tokens: int) -> str:
         """Call Groq completions endpoint and return a plain string.
 
@@ -127,6 +127,7 @@ class GroqLLM:
                 return str(out)
         return str(data)
 
+    @retry(retry=retry_if_exception(_is_retryable), stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
     def _openai_complete(self, prompt: str, max_tokens: int) -> str:
         """Fallback to OpenAI Chat Completions API for environments without Groq.
 

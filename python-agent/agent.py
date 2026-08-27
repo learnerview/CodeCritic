@@ -16,6 +16,7 @@ Security and keys:
 import os
 import re
 import tempfile
+import threading
 import time
 import zipfile
 from pathlib import Path
@@ -47,16 +48,16 @@ AUTH_USERNAME = os.getenv("AUTH_USERNAME", "admin")
 AUTH_PASSWORD = os.getenv("AUTH_PASSWORD", "admin")
 
 # Cached JWT for Java server calls; refreshed lazily on expiry or 401.
+# A lock serializes login/refresh so concurrent requests don't perform
+# redundant logins or race while one thread is mid-refresh.
 _java_token: Optional[str] = None
 _java_token_expires_at: float = 0.0
+_java_token_lock = threading.Lock()
 
 
-def _java_auth_token() -> str:
-    """Return a cached JWT for the Java server, logging in when needed."""
+def _login_java_server() -> str:
+    """Perform a fresh login against the Java server and return a token."""
     global _java_token, _java_token_expires_at
-    now = time.time()
-    if _java_token and now < _java_token_expires_at:
-        return _java_token
     resp = requests.post(
         f"{JAVA_SERVER}/auth/login",
         json={"username": AUTH_USERNAME, "password": AUTH_PASSWORD},
@@ -67,11 +68,25 @@ def _java_auth_token() -> str:
     token = data.get("token")
     if not token:
         raise RuntimeError("Java server login returned no token")
-    _java_token = token
     expires_ms = int(os.getenv("JWT_EXPIRATION_MS", "86400000"))
     cache_ttl = max(60, int(expires_ms / 1000) - 60)
-    _java_token_expires_at = now + min(cache_ttl, 3600)
+    _java_token = token
+    _java_token_expires_at = time.time() + min(cache_ttl, 3600)
     return _java_token
+
+
+def _java_auth_token() -> str:
+    """Return a cached JWT for the Java server, logging in when needed.
+
+    Refreshes are guarded by a lock so only one thread logs in at a time;
+    other threads reuse the freshly cached token.
+    """
+    if _java_token and time.time() < _java_token_expires_at:
+        return _java_token
+    with _java_token_lock:
+        if _java_token and time.time() < _java_token_expires_at:
+            return _java_token
+        return _login_java_server()
 
 
 def _java_request(method: str, path: str, *, payload: dict, timeout: int = 45) -> requests.Response:
@@ -80,7 +95,6 @@ def _java_request(method: str, path: str, *, payload: dict, timeout: int = 45) -
     Timeout is generous on purpose: on Render's free tier the Java service
     sleeps after 15 minutes of inactivity and can take 30-60s to cold-boot.
     """
-    global _java_token
     resp = requests.request(
         method,
         f"{JAVA_SERVER}{path}",
@@ -89,19 +103,17 @@ def _java_request(method: str, path: str, *, payload: dict, timeout: int = 45) -
         timeout=timeout,
     )
     if resp.status_code == 401:
-        _java_token = None
-        resp = requests.request(
-            method,
-            f"{JAVA_SERVER}{path}",
-            json=payload,
-            headers={"Authorization": f"Bearer {_java_auth_token()}"},
-            timeout=timeout,
-        )
+        with _java_token_lock:
+            _java_token = None
+            _java_token_expires_at = 0.0
+            resp = requests.request(
+                method,
+                f"{JAVA_SERVER}{path}",
+                json=payload,
+                headers={"Authorization": f"Bearer {_java_auth_token()}"},
+                timeout=timeout,
+            )
     return resp
-
-
-class ComplexityRequest(BaseModel):
-    code: str
 
 
 class ComplexityResponse(BaseModel):
@@ -118,13 +130,6 @@ class BugFinding(BaseModel):
 
 class BugReport(BaseModel):
     bugs: List[BugFinding]
-
-
-class TestGenerationRequest(BaseModel):
-    className: str
-    methodName: str
-    parameters: Optional[str] = None
-    code: Optional[str] = None
 
 
 class TestGenerationResponse(BaseModel):
@@ -179,17 +184,10 @@ def generate_test(className: str, methodName: str, parameters: Optional[str], co
 def _extract_java_code_block(text: str) -> str:
     if not text:
         return ""
-    match = re.search(r"```(?:java)?\s*(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
+    match = re.search(r"```(?:java)\s*(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
     if match:
         return match.group(1).strip()
     return text.strip()
-
-
-def _extract_markdown_code_block(text: str) -> str:
-    if not text:
-        return ""
-    match = re.search(r"```(?:\w+)?\s*(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
-    return match.group(1).strip() if match else text.strip()
 
 
 def _extract_method_names(code: str) -> List[str]:
@@ -239,13 +237,15 @@ def _build_deterministic_summary(code: str) -> tuple[ComplexityResponse | None, 
     return complexity, bug_report, templates, parts
 
 
-def generate_full_test_suite(code: str) -> str:
+def generate_full_test_suite(code: str, summary: tuple | None = None) -> str:
     """Generate a full JUnit test suite from source code.
-    
+
     Uses deterministic analysis (complexity, bugs) plus LLM to synthesize complete tests.
-    Note: _build_deterministic_summary is called once to reuse bug findings.
+    ``summary`` is an optional precomputed ``_build_deterministic_summary`` result so
+    callers that already ran deterministic analysis (e.g. ``run_review_pipeline``) can
+    reuse it instead of re-analyzing the code.
     """
-    _, bugs, templates, _ = _build_deterministic_summary(code)
+    _, bugs, templates, _ = summary if summary is not None else _build_deterministic_summary(code)
     template_context = "\n\n".join(
         f"Method: {name}\nTemplate:\n{template}" for name, template in templates
     )
@@ -272,11 +272,18 @@ def generate_full_test_suite(code: str) -> str:
         "Reference deterministic templates (improve them into full tests):\n"
         f"{template_context or 'No templates available.'}\n"
     )
-    raw = LLM.complete(prompt, max_tokens=2200)
-    java_code = _extract_java_code_block(raw)
-    if "class " not in java_code or "@Test" not in java_code:
-        raise RuntimeError("LLM did not return a valid JUnit test class")
-    return java_code
+    try:
+        raw = LLM.complete(prompt, max_tokens=2200)
+        java_code = _extract_java_code_block(raw)
+        if "class " not in java_code or "@Test" not in java_code:
+            raise RuntimeError("LLM did not return a valid JUnit test class")
+        return java_code
+    except Exception as exc:
+        block = "\n\n".join(
+            f"--- Template for {name} ---\n{template}" for name, template in templates
+        ) or "No deterministic templates available."
+        return f"# LLM test synthesis unavailable ({exc}); using deterministic templates.\n\n{block}"
+
 
 
 def analyze_debug_issue(code: str, error_log: str, language: str = "java") -> str:
@@ -309,7 +316,13 @@ def analyze_debug_issue(code: str, error_log: str, language: str = "java") -> st
         f"ERROR LOG:\n{error_log}\n\n"
         f"ANALYSIS CONTEXT:\n{chr(10).join(parts)}\n"
     )
-    return LLM.complete(prompt, max_tokens=1300)
+    try:
+        return LLM.complete(prompt, max_tokens=1300)
+    except Exception as exc:
+        return (
+            f"LLM diagnosis unavailable ({exc}); showing deterministic static analysis.\n\n"
+            + "\n".join(parts)
+        )
 
 
 def build_repository_context(
@@ -528,7 +541,7 @@ def analyze_github_repository(
     repo_meta = context["repository"]
     docs = context["documents"]
 
-    per_file = [{"path": d["path"], "language": d["language"], "size": d["size"]} for d in docs]
+    per_file = []
     java_findings = []
     combined_source = []
     remaining_budget = 32000
@@ -536,6 +549,7 @@ def analyze_github_repository(
         rel = str(doc["path"])
         text = str(doc["content"])
         language = str(doc["language"])
+        per_file.append({"path": rel, "language": language, "size": doc.get("size", 0)})
         snippet = text[: min(4000, max(0, remaining_budget))]
         if snippet:
             rendered = f"FILE: {rel}\n{snippet}"
@@ -577,7 +591,13 @@ def analyze_github_repository(
         "Source excerpts:\n"
         + "\n\n".join(combined_source)
     )
-    ai_summary = LLM.complete(summary_prompt, max_tokens=1800)
+    try:
+        ai_summary = LLM.complete(summary_prompt, max_tokens=1800)
+    except Exception as exc:
+        ai_summary = (
+            f"LLM summary unavailable ({exc}). "
+            "Deterministic metrics and static findings below remain valid."
+        )
     return {
         "repository": repo_meta,
         "filesAnalyzed": per_file,
@@ -597,7 +617,7 @@ if __name__ == "__main__":
     logger.info("Calling Java server for complexity (if running)...")
     try:
         c = get_complexity(sample)
-        logger.info("Complexity result", extra={"complexity": c.dict()})
+        logger.info("Complexity result", extra={"complexity": c.model_dump()})
     except Exception as e:
         logger.error("Complexity call failed", extra={"error": str(e)})
 
@@ -617,18 +637,11 @@ def run_review_pipeline(code: str) -> str:
       summary; this reduces token usage and keeps the LLM focused on high-level reasoning.
     - Prefer actionable, small suggestions in the final output to help developers iterate quickly.
     """
-    _, _, method_tests, parts = _build_deterministic_summary(code)
+    deterministic_summary = _build_deterministic_summary(code)
+    _, _, _, parts = deterministic_summary
 
-    try:
-        full_tests = generate_full_test_suite(code)
-        parts.append("--- AI GENERATED COMPLETE TEST SUITE ---")
-        parts.append(full_tests)
-    except Exception as exc:
-        parts.append(f"AI full test generation failed: {exc}")
-        if method_tests:
-            parts.append("Fallback deterministic templates:")
-            for method_name, template in method_tests:
-                parts.append(f"--- Template for {method_name} ---\n{template}")
+    parts.append("--- AI GENERATED COMPLETE TEST SUITE ---")
+    parts.append(generate_full_test_suite(code, summary=deterministic_summary))
 
     # Synthesize final review with Groq
     try:

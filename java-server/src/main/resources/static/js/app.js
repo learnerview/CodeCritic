@@ -18,7 +18,79 @@ const toText = (value) => (typeof value === 'string' ? value : JSON.stringify(va
 const withSpinner = (text) => `<span class="loading-spinner"></span>${text}`;
 const withoutSpinner = (text) => text.replace(/<span class="loading-spinner"><\/span>/g, '');
 
-console.log('CodeCritic: dashboard v2.0.0 (JWT + unified workspace)');
+console.log('CodeCritic: dashboard v2.1.0 (JWT + unified workspace + async jobs)');
+
+const SAMPLES = {
+    simple: `public class Hello {
+    public static void main(String[] args) {
+        System.out.println("Hello, CodeCritic!");
+    }
+}`,
+    buggy: `public class Calculator {
+    public int divide(int a, int b) {
+        return a / b;
+    }
+    public String getName(Object obj) {
+        return obj.toString();
+    }
+}`,
+    complex: `public class Router {
+    public String route(int status, boolean retry, String body) {
+        if (status >= 200 && status < 300) {
+            return "ok";
+        } else if (status == 404) {
+            return "not found";
+        } else if (status == 500) {
+            if (retry) {
+                return "retry";
+            }
+            return "error";
+        } else if (body != null && body.contains("fatal")) {
+            return "fatal";
+        }
+        return "unknown";
+    }
+}`,
+    legacy: `public class Legacy {
+    public void process(int strategy) {
+        int result = 0;
+        switch (strategy) {
+            case 1:
+                result = compute(1);
+                break;
+            case 2:
+                result = compute(2);
+                break;
+            case 3:
+                result = compute(3);
+                break;
+            default:
+                result = -1;
+        }
+        System.out.println(result);
+    }
+    private int compute(int x) {
+        return x * 10;
+    }
+}`,
+    empty: `public class Empty {
+    // Add a method to analyze
+}`
+};
+
+function toast(message, type = 'info') {
+    const container = byId('toastContainer');
+    if (!container) return;
+    const el = document.createElement('div');
+    el.className = `toast toast-${type}`;
+    el.textContent = message;
+    container.appendChild(el);
+    setTimeout(() => el.classList.add('show'), 10);
+    setTimeout(() => {
+        el.classList.remove('show');
+        setTimeout(() => el.remove(), 300);
+    }, 4000);
+}
 
 function getToken() {
     return localStorage.getItem(TOKEN_KEY);
@@ -92,6 +164,49 @@ async function postJson(url, body, timeoutMs = 150000) {
             throw new Error('Request timed out. The AI service may be busy or unreachable - try again.');
         }
         throw new Error('Network error: could not reach the service. Check that the backend is running and reachable.');
+    }
+    clearTimeout(timer);
+
+    const text = await response.text();
+    let parsed;
+    try {
+        parsed = text ? JSON.parse(text) : {};
+    } catch {
+        parsed = { raw: text };
+    }
+
+    if (response.status === 401) {
+        clearToken();
+        showLogin();
+    }
+
+    if (!response.ok) {
+        throw new Error(parsed.message || parsed.detail || `Request failed with ${response.status}`);
+    }
+    return parsed;
+}
+
+async function getJson(url, timeoutMs = 30000) {
+    const headers = {};
+    const token = getToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    let response;
+    try {
+        response = await fetch(url, {
+            method: 'GET',
+            headers,
+            signal: controller.signal
+        });
+    } catch (error) {
+        clearTimeout(timer);
+        if (error.name === 'AbortError') {
+            throw new Error('Request timed out.');
+        }
+        throw new Error('Network error: could not reach the service.');
     }
     clearTimeout(timer);
 
@@ -328,6 +443,7 @@ function initTabs() {
 
 function initReviewPage() {
     const editor = createEditor('codeInput');
+    if (editor) window.reviewEditor = editor;
     const classNameInput = byId('className');
     const methodNameInput = byId('methodName');
     const parametersInput = byId('parameters');
@@ -355,8 +471,9 @@ function initReviewPage() {
         const cognitive = byId('cognitiveMetric');
         if (cyclomatic) cyclomatic.textContent = data.cyclomaticComplexity ?? 0;
         if (cognitive) cognitive.textContent = data.cognitiveComplexity ?? 0;
-        showOutput(data);
+        setStructuredView('complexity', data, data);
         setStatus('Complexity analysis complete');
+        toast('Complexity computed', 'success');
     };
 
     const runBugs = async () => {
@@ -366,8 +483,9 @@ function initReviewPage() {
         const bugs = data.bugs ?? [];
         const bugMetric = byId('bugMetric');
         if (bugMetric) bugMetric.textContent = bugs.length;
-        showOutput({ bugs });
+        setStructuredView('bugs', data, data);
         setStatus(bugs.length ? `${bugs.length} bug finding(s) ready` : 'No bugs detected');
+        toast(bugs.length ? `${bugs.length} finding(s)` : 'No bugs', bugs.length ? 'warn' : 'success');
     };
 
     const runTestGeneration = async () => {
@@ -379,8 +497,9 @@ function initReviewPage() {
             parameters: parametersInput?.value || '',
             code: getCode()
         });
-        showOutput(data.junitCode ?? data);
+        setStructuredView('test', data, data.junitCode ?? data);
         setStatus('Test template generated');
+        toast('Test template generated', 'success');
     };
 
     const runFullTestGeneration = async () => {
@@ -388,8 +507,9 @@ function initReviewPage() {
         clearError();
         if (!PYTHON_AGENT_BASE) throw new Error('Python agent URL is not loaded yet - wait a moment and try again.');
         const data = await postJson(`${PYTHON_AGENT_BASE}/generate-tests`, { code: getCode() });
-        showOutput(data.tests ?? data);
+        setStructuredView('ai', data.tests ?? data, data.tests ?? data);
         setStatus('Complete AI test suite generated');
+        toast('AI test suite ready', 'success');
     };
 
     const runReview = async () => {
@@ -397,8 +517,9 @@ function initReviewPage() {
         clearError();
         if (!PYTHON_AGENT_BASE) throw new Error('Python agent URL is not loaded yet - wait a moment and try again.');
         const data = await postJson(`${PYTHON_AGENT_BASE}/review`, { code: getCode() });
-        showOutput(data.review ?? data);
+        setStructuredView('ai', data.review ?? data, data.review ?? data);
         setStatus('AI review complete');
+        toast('AI review complete', 'success');
     };
 
     const runAll = async () => {
@@ -413,6 +534,7 @@ function initReviewPage() {
         } catch (error) {
             setError();
             showOutput(`Error: ${error?.message || error}`);
+            toast(`Analysis failed: ${error?.message || error}`, 'error');
         } finally {
             analyzeBtn.disabled = false;
         }
@@ -431,6 +553,7 @@ function initReviewPage() {
             } catch (error) {
                 setError();
                 showOutput(`Error: ${error?.message || error}`);
+                toast(`Analysis failed: ${error?.message || error}`, 'error');
             } finally {
                 if (analyzeBtn) analyzeBtn.disabled = false;
             }
@@ -577,6 +700,343 @@ function formatRepoMetrics(m) {
     return lines.length ? lines.join('\n') : '(none)';
 }
 
+function esc(value) {
+    return String(value ?? '').replace(/[&<>"']/g, (c) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+}
+
+function initSamples() {
+    document.querySelectorAll('[data-sample]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const name = btn.dataset.sample;
+            const code = SAMPLES[name];
+            if (!code) return;
+            if (window.reviewEditor) {
+                window.reviewEditor.setValue(code);
+                if (window.reviewEditor.setCursor) window.reviewEditor.setCursor({ line: 0, ch: 0 });
+                window.reviewEditor.focus();
+            } else {
+                const ta = byId('codeInput');
+                if (ta) ta.value = code;
+            }
+            toast(`Loaded sample: ${btn.textContent.trim()}`, 'info');
+        });
+    });
+}
+
+function initResultTabs() {
+    document.querySelectorAll('.result-tab').forEach((tab) => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('.result-tab').forEach((t) => t.classList.remove('active'));
+            tab.classList.add('active');
+            const view = tab.dataset.result;
+            const structured = byId('structuredResult');
+            const output = byId('output');
+            if (structured) structured.style.display = view === 'structured' ? 'block' : 'none';
+            if (output) output.style.display = view === 'raw' ? 'block' : 'none';
+        });
+    });
+}
+
+let lastVerdict = {
+    kind: null,
+    data: null,
+    raw: null
+};
+
+function setStructuredView(kind, data, raw) {
+    lastVerdict = { kind, data, raw };
+    const container = byId('structuredResult');
+    const output = byId('output');
+    if (!container) return;
+    container.innerHTML = renderStructured(kind, data);
+    if (output) {
+        output.textContent = toText(raw != null ? raw : data);
+        output.classList.remove('error');
+    }
+    // Keep a non-structured raw string if the raw view is active
+    if (output && output.style.display !== 'none') {
+        // already shown above
+    }
+}
+
+function renderStructured(kind, data) {
+    if (kind === 'complexity') {
+        return `
+            <div class="stat-grid">
+                <div class="stat-card"><span class="stat-num">${esc(data.cyclomaticComplexity ?? 0)}</span><label>Cyclomatic</label></div>
+                <div class="stat-card"><span class="stat-num">${esc(data.cognitiveComplexity ?? 0)}</span><label>Cognitive</label></div>
+            </div>`;
+    }
+    if (kind === 'bugs') {
+        const bugs = data?.bugs || [];
+        if (!bugs.length) {
+            return `<div class="ok-banner">No bugs detected — the snippet looks clean.</div>`;
+        }
+        return `
+            <div class="findings">
+                ${bugs.map((b) => `
+                    <div class="finding">
+                        <div class="finding-head">
+                            <span class="badge badge-${b.type === 'NullPointerRisk' ? 'warn' : 'danger'}">${esc(b.type || 'Issue')}</span>
+                            <span class="finding-line">Line ${esc(b.line ?? '?')}</span>
+                        </div>
+                        <p class="finding-msg">${esc(b.message || '')}</p>
+                        <p class="finding-sugg"><strong>Suggestion:</strong> ${esc(b.suggestion || '—')}</p>
+                    </div>`).join('')}
+            </div>`;
+    }
+    if (kind === 'test') {
+        const code = data?.junitCode || (typeof data === 'string' ? data : '');
+        return `
+            <div class="test-block">
+                <div class="test-block-head"><strong>Generated JUnit test</strong></div>
+                <pre class="test-code">${esc(code || '(empty)')}</pre>
+            </div>`;
+    }
+    if (kind === 'ai') {
+        const text = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+        return `<div class="ai-review"><span class="ai-badge">AI</span>${esc(text)}</div>`;
+    }
+    return `<pre class="fallback">${esc(toText(data))}</pre>`;
+}
+
+/* ================= Async Jobs tab ================= */
+let jobHistory = [];
+
+function initJobsPage() {
+    const jobsBtns = document.querySelectorAll('[data-job]');
+    jobsBtns.forEach((btn) => {
+        btn.addEventListener('click', async () => await submitJob(btn, btn.dataset.job));
+    });
+    const submitAll = byId('submitJobsBtn');
+    if (submitAll) submitAll.addEventListener('click', submitAllJobs);
+    const refreshJobs = byId('refreshJobsBtn');
+    if (refreshJobs) refreshJobs.addEventListener('click', refreshJobHistory);
+    const refreshMetrics = byId('refreshMetricsBtn');
+    if (refreshMetrics) refreshMetrics.addEventListener('click', refreshMetrics);
+    refreshJobHistory();
+    refreshMetrics();
+}
+
+function jobPayloadFor(jobType) {
+    const code = byId('jobCode')?.value.trim() || '';
+    const className = byId('jobClassName')?.value.trim() || '';
+    const methodName = byId('jobMethodName')?.value.trim() || '';
+    const parameters = byId('jobParameters')?.value.trim() || '';
+    if (!code && jobType !== 'test-generation') {
+        throw new Error('Paste some Java code in the job code box first.');
+    }
+    const payload = { code };
+    if (className || methodName || parameters) {
+        payload.className = className || 'Sample';
+        payload.methodName = methodName || 'main';
+        payload.parameters = parameters || '';
+    }
+    return payload;
+}
+
+async function submitJob(btn, jobType) {
+    if (!btn) return;
+    const statusText = byId('jobStatusText');
+    const original = btn.textContent;
+    btn.disabled = true;
+    try {
+        const payload = jobPayloadFor(jobType);
+        if (statusText) statusText.innerHTML = withSpinner(`Submitting ${jobType}...`);
+        const data = await postJson(`/api/jobs/${endpointFor(jobType)}`, payload);
+        jobHistory.unshift({ jobId: data.jobId, status: 'QUEUED', jobType, submitted: Date.now() });
+        renderJobHistory();
+        if (statusText) statusText.textContent = `Queued ${jobType} -> ${data.jobId}`;
+        toast(`Job queued: ${data.jobId.slice(0, 8)}…`, 'success');
+        pollJob(data.jobId, jobType);
+    } catch (error) {
+        if (statusText) { statusText.textContent = 'Submission failed'; statusText.classList.add('error'); }
+        toast(`Submission failed: ${error?.message || error}`, 'error');
+    } finally {
+        btn.disabled = false;
+        if (btn) btn.textContent = original;
+    }
+}
+
+function endpointFor(jobType) {
+    if (jobType === 'complexity-analysis') return 'complexity';
+    if (jobType === 'bug-detection') return 'bugs';
+    return 'generate-test';
+}
+
+async function submitAllJobs() {
+    const statusText = byId('jobStatusText');
+    const btn = byId('submitJobsBtn');
+    if (!btn) return;
+    btn.disabled = true;
+    try {
+        if (statusText) statusText.innerHTML = withSpinner('Enqueuing all three jobs...');
+        await submitJobQuiet('complexity-analysis');
+        await submitJobQuiet('bug-detection');
+        await submitJobQuiet('test-generation');
+        if (statusText) statusText.textContent = 'All three jobs enqueued';
+        toast('Enqueued 3 background jobs', 'success');
+    } catch (error) {
+        if (statusText) { statusText.textContent = 'Failed to enqueue'; statusText.classList.add('error'); }
+        toast(`Enqueue failed: ${error?.message || error}`, 'error');
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function submitJobQuiet(jobType) {
+    const payload = jobPayloadFor(jobType);
+    const data = await postJson(`/api/jobs/${endpointFor(jobType)}`, payload);
+    jobHistory.unshift({ jobId: data.jobId, status: 'QUEUED', jobType, submitted: Date.now() });
+    renderJobHistory();
+    pollJob(data.jobId, jobType);
+}
+
+async function pollJob(jobId, jobType) {
+    for (let i = 0; i < 60; i++) {
+        await sleep(2000);
+        try {
+            const jr = await getJson(`/api/jobs/${jobId}`);
+            const entry = jobHistory.find((j) => j.jobId === jobId);
+            if (entry) {
+                entry.status = jr.status || 'RUNNING';
+                entry.result = jr.result;
+                entry.producer = jr.producer;
+            }
+            renderJobHistory();
+            if (jr.status === 'SUCCESS' || jr.status === 'FAILED' || jr.status === 'FAILEDWithError') {
+                toast(`${jobType} ${jr.status.toLowerCase() === 'success' ? 'completed' : 'failed'}`, jr.status === 'SUCCESS' ? 'success' : 'error');
+                return;
+            }
+        } catch (e) {
+            // job not ready yet -> keep polling
+        }
+    }
+}
+
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+function renderJobHistory() {
+    const container = byId('jobHistory');
+    if (!container) return;
+    if (!jobHistory.length) {
+        container.innerHTML = `<div class="structured-empty">No jobs submitted yet.</div>`;
+        return;
+    }
+    container.innerHTML = jobHistory.map((j) => `
+        <div class="job-row">
+            <div class="job-id" title="${esc(j.jobId)}">${esc(j.jobId.slice(0, 8))}…</div>
+            <div class="job-type">${esc(j.jobType)}</div>
+            <div class="job-status status-${statusClass(j.status)}">${esc(j.status || 'QUEUED')}</div>
+            <button class="ghost small job-detail" data-jobid="${esc(j.jobId)}">Inspect</button>
+        </div>`).join('');
+    container.querySelectorAll('.job-detail').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const entry = jobHistory.find((x) => x.jobId === btn.dataset.jobid);
+            showJobDetail(entry);
+        });
+    });
+}
+
+function statusClass(status) {
+    const s = (status || '').toUpperCase();
+    if (s.startsWith('SUCCESS')) return 'ok';
+    if (s.startsWith('FAIL')) return 'err';
+    if (s.startsWith('RUN') || s.startsWith('QUEUED')) return 'run';
+    return '';
+}
+
+function showJobDetail(entry) {
+    const container = byId('structuredResult');
+    const output = byId('output');
+    // Show the job detail in the metrics panel instead to avoid disturbing review
+    const target = byId('metricsView');
+    if (target && entry.result) {
+        target.innerHTML = `
+            <div class="job-detail-view">
+                <p class="job-meta"><strong>Job:</strong> ${esc(entry.jobId)} &middot; <strong>Type:</strong> ${esc(entry.jobType)} &middot; <strong>Status:</strong> ${esc(entry.status || '')}</p>
+                <pre class="test-code">${esc(toText(entry.result))}</pre>
+            </div>`;
+        toast('Showing job result', 'info');
+    } else if (container && entry.result) {
+        container.innerHTML = `<div class="test-block"><div class="test-block-head"><strong>${esc(entry.jobType)} result</strong></div><pre class="test-code">${esc(toText(entry.result))}</pre></div>`;
+        if (output) output.textContent = toText(entry.result);
+    } else {
+        toast('Job still processing — no result yet', 'info');
+    }
+}
+
+async function refreshJobHistory() {
+    // Without a listing endpoint, we surface what we've tracked + queue metrics
+    renderJobHistory();
+    await refreshMetrics();
+}
+
+async function refreshMetrics() {
+    const view = byId('metricsView');
+    const status = byId('metricsStatus');
+    try {
+        const data = await getJson('/api/metrics');
+        if (view) view.innerHTML = renderMetrics(data);
+        if (status) status.textContent = 'Updated';
+        updateJobCounters(data);
+    } catch (error) {
+        if (status) status.textContent = 'Error';
+        if (view) view.innerHTML = `<div class="structured-empty">Could not load metrics: ${esc(error?.message || error)}</div>`;
+    }
+}
+
+function updateJobCounters(metrics) {
+    const analysisTypes = Object.keys(metrics?.analysis || {});
+    let completed = 0;
+    analysisTypes.forEach((t) => { completed += (metrics.analysis[t]?.requests || 0); });
+    const queueDepth = byId('jobQueueDepth');
+    if (queueDepth) queueDepth.textContent = jobHistory.filter((j) => (j.status || '').startsWith('QUEUED')).length;
+    const running = byId('jobRunning');
+    if (running) running.textContent = jobHistory.filter((j) => (j.status || '').startsWith('RUN')).length;
+    const compEl = byId('jobCompleted');
+    if (compEl) compEl.textContent = jobHistory.filter((j) => (j.status || '').startsWith('SUCCESS')).length;
+}
+
+function renderMetrics(data) {
+    const analysis = data?.analysis || {};
+    const types = Object.keys(analysis);
+    if (!types.length) {
+        return `<div class="structured-empty">No metrics recorded yet — run some analyses first.</div>`;
+    }
+    const rows = types.map((t) => {
+        const m = analysis[t] || {};
+        const req = m.requests || 0;
+        const avg = m.avgLatencyMs != null ? `${m.avgLatencyMs} ms` : '—';
+        const samples = m.samples || 0;
+        const pct = req > 0 ? Math.min(100, Math.max(8, Math.round((samples / (typesReduceMax(analysis))) * 100))) : 0;
+        return `
+            <div class="metric-row">
+                <span class="metric-label">${esc(t)}</span>
+                <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
+                <span class="metric-val">${req} req</span>
+                <span class="metric-val muted">${avg}</span>
+            </div>`;
+    }).join('');
+    const spotbugs = data?.spotbugs || {};
+    return `
+        <div class="metric-table">
+            ${rows}
+            <div class="metric-legend">
+                <span>Requests by analysis type &middot; avg latency</span>
+                <span>SpotBugs: ${spotbugs.runs || 0} runs / ${spotbugs.avgMs || 0} ms avg</span>
+            </div>
+        </div>`;
+}
+
+function typesReduceMax(analysis) {
+    let max = 1;
+    Object.values(analysis).forEach((m) => { const r = m?.requests || 0; if (r > max) max = r; });
+    return max;
+}
+
 function bootstrap() {
     initAuth();
     initTabs();
@@ -584,6 +1044,9 @@ function bootstrap() {
     initReviewPage();
     initRepositoryPage();
     initDebugPage();
+    initSamples();
+    initResultTabs();
+    initJobsPage();
 }
 
 if (document.readyState === 'loading') {

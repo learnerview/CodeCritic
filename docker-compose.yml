@@ -12,6 +12,18 @@ services:
     networks:
       - codecritic-net
 
+  mongo:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - codecritic-net
+
   java-server:
     build:
       context: .
@@ -20,7 +32,7 @@ services:
       - "8080:8080"
     environment:
       - REDIS_URL=redis://redis:6379
-      - SPRING_DATA_MONGODB_URI=mongodb://host.docker.internal:27017/codecritic
+      - SPRING_DATA_MONGODB_URI=mongodb://mongo:27017/codecritic
       - AUTH_USERNAME=${AUTH_USERNAME:-admin}
       - AUTH_PASSWORD=${AUTH_PASSWORD:-admin}
       - JWT_SECRET=${JWT_SECRET:-codecritic-demo-secret-key-change-me-in-production-0123456789}
@@ -29,6 +41,8 @@ services:
       - SIMPLYDONE4J_SCHEDULER_ENABLED=${SIMPLYDONE4J_SCHEDULER_ENABLED:-true}
     depends_on:
       redis:
+        condition: service_healthy
+      mongo:
         condition: service_healthy
     networks:
       - codecritic-net

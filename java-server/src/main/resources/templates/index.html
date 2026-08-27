@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="/vendor/codemirror/addon/fold/foldgutter.css">
     <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
     <link rel="stylesheet" href="/vendor/codemirror/theme/dracula.css">
-    <link rel="stylesheet" href="/css/style.css?v=7">
+    <link rel="stylesheet" href="/css/style.css?v=8">
 </head>
 <body>
     <div class="orb orb-a"></div>
@@ -52,6 +52,7 @@
         <div class="brand">CodeCritic</div>
         <div class="tabs" id="mainTabs">
             <button class="tab active" data-tab="review">Review</button>
+            <button class="tab" data-tab="jobs">Jobs</button>
             <button class="tab" data-tab="repository">Repository</button>
             <button class="tab" data-tab="debug">Debug</button>
         </div>
@@ -68,6 +69,14 @@
                 <p class="eyebrow">Snippet Review</p>
                 <h1>Analyze Java snippets with full AI test generation.</h1>
                 <p class="lede">Cyclomatic complexity, bug detection, JUnit scaffolds and an AI-synthesized review.</p>
+                <div class="samples">
+                    <span class="samples-label">Try a sample</span>
+                    <button class="chip" data-sample="simple">Simple</button>
+                    <button class="chip" data-sample="buggy">Buggy</button>
+                    <button class="chip" data-sample="complex">Complex</button>
+                    <button class="chip" data-sample="legacy">Legacy</button>
+                    <button class="chip" data-sample="empty">Empty class</button>
+                </div>
                 <div class="metrics">
                     <div class="metric">
                         <span id="cyclomaticMetric">0</span>
@@ -133,7 +142,88 @@
                         <button class="ghost small" data-copy-target="output" title="Copy results to clipboard">Copy</button>
                     </div>
                 </div>
-                <pre id="output">Run an analysis to see results here.</pre>
+                <div class="result-tabs">
+                    <button class="result-tab active" data-result="structured">Structured</button>
+                    <button class="result-tab" data-result="raw">Raw JSON</button>
+                </div>
+                <div id="structuredResult" class="structured-result">
+                    <div class="structured-empty">Run an analysis to see a structured summary here.</div>
+                </div>
+                <pre id="output" style="display:none;">Run an analysis to see results here.</pre>
+            </div>
+        </section>
+
+        <section id="tab-jobs" class="tab-view">
+            <div class="hero">
+                <p class="eyebrow">Async Job Queue</p>
+                <h1>Run analyses in the background via SimplyDone4J.</h1>
+                <p class="lede">Submit complexity, bug-detection and test-generation jobs, watch them process through the worker pool, and review latency + throughput metrics.</p>
+                <div class="metrics metrics-3">
+                    <div class="metric">
+                        <span id="jobQueueDepth">0</span>
+                        <label>In Queue</label>
+                    </div>
+                    <div class="metric">
+                        <span id="jobRunning">0</span>
+                        <label>Running</label>
+                    </div>
+                    <div class="metric">
+                        <span id="jobCompleted">0</span>
+                        <label>Completed</label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>Submit a Background Job</h2>
+                    <button id="submitJobsBtn" class="ghost">Enqueue All</button>
+                </div>
+                <div class="grid grid-3">
+                    <label>Code / class
+                        <textarea id="jobCode" class="job-code" spellcheck="false" rows="6" placeholder="public class Sample { ... }"></textarea>
+                    </label>
+                    <label>Class name
+                        <input id="jobClassName" type="text" placeholder="Sample">
+                    </label>
+                    <label>Method name
+                        <input id="jobMethodName" type="text" placeholder="main">
+                    </label>
+                    <label>Parameters
+                        <input id="jobParameters" type="text" placeholder="String[] args">
+                    </label>
+                </div>
+                <div class="actions">
+                    <button id="jobComplexityBtn" data-job="complexity-analysis">Complexity Job</button>
+                    <button id="jobBugsBtn" data-job="bug-detection">Bug-Detection Job</button>
+                    <button id="jobTestBtn" data-job="test-generation">Test-Generation Job</button>
+                </div>
+            </div>
+
+            <div class="panel results">
+                <div class="panel-header">
+                    <h2>Job History</h2>
+                    <div class="panel-actions">
+                        <span id="jobStatusText">Idle</span>
+                        <button id="refreshJobsBtn" class="ghost small">Refresh</button>
+                    </div>
+                </div>
+                <div id="jobHistory" class="job-history">
+                    <div class="structured-empty">No jobs submitted yet.</div>
+                </div>
+            </div>
+
+            <div class="panel results">
+                <div class="panel-header">
+                    <h2>Metrics</h2>
+                    <div class="panel-actions">
+                        <span id="metricsStatus">—</span>
+                        <button id="refreshMetricsBtn" class="ghost small">Refresh</button>
+                    </div>
+                </div>
+                <div id="metricsView" class="metrics-view">
+                    <div class="structured-empty">Fetch /api/metrics to see throughput and latency.</div>
+                </div>
             </div>
         </section>
 
@@ -225,6 +315,7 @@
     <script src="/vendor/codemirror/addon/fold/brace-fold.js"></script>
     <script src="/vendor/codemirror/addon/hint/show-hint.js"></script>
     <script src="/vendor/codemirror/addon/hint/anyword-hint.js"></script>
-    <script src="/js/app.js?v=7"></script>
+    <script src="/js/app.js?v=8"></script>
+    <div id="toastContainer" class="toast-container" aria-live="polite"></div>
 </body>
 </html>

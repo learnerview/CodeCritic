@@ -25,7 +25,7 @@ public class PatternBugDetector implements BugDetector {
         String[] lines = code.split("\\r?\\n");
         for (int i = 0; i < lines.length; i++) {
             String line = lines[i];
-            if (line.matches(".*\\/\\s*0.*")) {
+            if (line.matches(".*\\d+\\s*/\\s*0.*")) {
                 bugs.add(new BugFinding("DivisionByZeroRisk", i + 1,
                         "Possible division by zero", "Check divisor for zero"));
             }

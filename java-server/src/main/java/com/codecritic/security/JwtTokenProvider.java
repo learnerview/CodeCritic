@@ -4,10 +4,12 @@ import com.codecritic.config.JwtProperties;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
+import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.Map;
 
@@ -20,16 +22,29 @@ import java.util.Map;
 @Component
 public class JwtTokenProvider {
 
+    /** Well-known demo default shipped in application.yml so local runs work without extra setup. */
+    private static final String DEMO_DEFAULT_SECRET = "codecritic-demo-secret-key-change-me-in-production-0123456789";
+
     private final JwtProperties properties;
     private final SecretKey key;
 
-    public JwtTokenProvider(JwtProperties properties) {
+    public JwtTokenProvider(JwtProperties properties, Environment environment) {
         this.properties = properties;
-        byte[] secretBytes = properties.getSecret().getBytes(StandardCharsets.UTF_8);
+        String secret = properties.getSecret();
+        byte[] secretBytes = secret.getBytes(StandardCharsets.UTF_8);
         if (secretBytes.length < 32) {
             throw new IllegalStateException("codecritic.jwt.secret must be at least 32 bytes for HS256");
         }
+        if (isProduction(environment) && (secret.isBlank() || DEMO_DEFAULT_SECRET.equals(secret))) {
+            throw new IllegalStateException(
+                    "JWT_SECRET must be set to a non-default value in production. "
+                            + "Refusing to start with the demo signing secret.");
+        }
         this.key = Keys.hmacShaKeyFor(secretBytes);
+    }
+
+    private static boolean isProduction(Environment environment) {
+        return Arrays.asList(environment.getActiveProfiles()).contains("prod");
     }
 
     public String generateToken(String username, Map<String, Object> claims) {

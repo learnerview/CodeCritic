@@ -8,7 +8,7 @@ import java.util.Map;
  */
 public interface JobCoordinator {
 
-    JobSubmissionResponse submit(String jobType, Map<String, Object> payload);
+    JobSubmissionResponse submit(String jobType, Map<String, Object> payload, String producer);
 
     Object getJobResult(String jobId);
 }

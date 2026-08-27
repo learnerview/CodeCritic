@@ -49,17 +49,57 @@ public class JavaParserComplexityAnalyzer implements ComplexityAnalyzer {
     }
 
     private ComplexityResponse fallbackHeuristic(String code) {
+        String cleaned = stripCommentsAndStrings(code == null ? "" : code);
         int cyclomatic = 1;
-        String[] tokens = {"if(", "for(", "while(", "case ", "&&", "||", "catch("};
+        String[] tokens = {"if(", "for(", "while(", "case ", "&&", "||", "catch(", "?:", "default:"};
         for (String t : tokens) {
             int idx = 0;
-            while ((idx = code.indexOf(t, idx)) != -1) {
+            while ((idx = cleaned.indexOf(t, idx)) != -1) {
                 cyclomatic++;
                 idx += t.length();
             }
         }
         int cognitive = Math.max(1, cyclomatic / 2);
         return new ComplexityResponse(cyclomatic, cognitive);
+    }
+
+    private static String stripCommentsAndStrings(String code) {
+        StringBuilder sb = new StringBuilder(code.length());
+        int i = 0;
+        int n = code.length();
+        while (i < n) {
+            char c = code.charAt(i);
+            if (c == '"') {
+                // skip string literal
+                i++;
+                while (i < n) {
+                    char sc = code.charAt(i);
+                    if (sc == '\\') { i += 2; continue; }
+                    if (sc == '"') { i++; break; }
+                    i++;
+                }
+                sb.append(' ');
+            } else if (c == '\'') {
+                // skip char literal
+                i++;
+                while (i < n && code.charAt(i) != '\'') i++;
+                i++;
+                sb.append(' ');
+            } else if (c == '/' && i + 1 < n && code.charAt(i + 1) == '/') {
+                // skip line comment
+                while (i < n && code.charAt(i) != '\n') i++;
+            } else if (c == '/' && i + 1 < n && code.charAt(i + 1) == '*') {
+                // skip block comment
+                i += 2;
+                while (i + 1 < n && !(code.charAt(i) == '*' && code.charAt(i + 1) == '/')) i++;
+                i += 2;
+                sb.append(' ');
+            } else {
+                sb.append(c);
+                i++;
+            }
+        }
+        return sb.toString();
     }
 
     private static class ComplexityVisitor extends VoidVisitorAdapter<Void> {

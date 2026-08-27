@@ -3,14 +3,14 @@ package com.codecritic.analysis.impl;
 import com.codecritic.analysis.BugDetector;
 import com.codecritic.dto.BugFinding;
 import com.codecritic.metrics.AnalysisMetrics;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -28,39 +28,43 @@ import java.util.concurrent.atomic.AtomicLong;
 @Component
 public class CachedSpotBugsBugDetector implements BugDetector {
 
-    private static final Logger log = LoggerFactory.getLogger(CachedSpotBugsBugDetector.class);
-
     private static final String DETECTOR_VERSION = "1";
     private static final int MAX_ENTRIES = 256;
 
     private final SpotBugsBugDetector delegate;
     private final AnalysisMetrics metrics;
-    private final ConcurrentHashMap<String, List<BugFinding>> cache = new ConcurrentHashMap<>();
+    private final Map<String, List<BugFinding>> cache;
     private final AtomicLong hits = new AtomicLong();
     private final AtomicLong misses = new AtomicLong();
 
     public CachedSpotBugsBugDetector(SpotBugsBugDetector delegate, AnalysisMetrics metrics) {
         this.delegate = delegate;
         this.metrics = metrics;
+        this.cache = Collections.synchronizedMap(new LinkedHashMap<>(16, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<String, List<BugFinding>> eldest) {
+                return size() > MAX_ENTRIES;
+            }
+        });
     }
 
     @Override
     public List<BugFinding> detect(String code) {
         String key = cacheKey(code);
-        List<BugFinding> cached = cache.get(key);
-        if (cached != null) {
-            hits.incrementAndGet();
-            return cached;
+        synchronized (cache) {
+            List<BugFinding> cached = cache.get(key);
+            if (cached != null) {
+                hits.incrementAndGet();
+                return cached;
+            }
         }
         misses.incrementAndGet();
         long started = System.nanoTime();
         List<BugFinding> findings = delegate.detect(code);
         metrics.recordSpotBugsRun((System.nanoTime() - started) / 1_000_000);
-        if (cache.size() >= MAX_ENTRIES) {
-            cache.clear();
-            log.info("SpotBugs cache reached {} entries; cleared", MAX_ENTRIES);
+        synchronized (cache) {
+            cache.put(key, findings);
         }
-        cache.put(key, findings);
         return findings;
     }
 

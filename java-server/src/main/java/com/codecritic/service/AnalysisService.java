@@ -48,9 +48,10 @@ public interface AnalysisService {
      *
      * @param jobType the type of job (complexity-analysis, bug-detection, test-generation)
      * @param payload the job payload map
+     * @param producer the authenticated user/producer for rate limiting
      * @return JobSubmissionResponse with job identifier and status
      */
-    JobSubmissionResponse submitAnalysisJob(String jobType, Map<String, Object> payload);
+    JobSubmissionResponse submitAnalysisJob(String jobType, Map<String, Object> payload, String producer);
 
     /**
      * Retrieve the result of a previously submitted job.

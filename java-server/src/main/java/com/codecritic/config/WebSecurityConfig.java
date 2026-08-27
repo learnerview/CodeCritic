@@ -18,18 +18,21 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Configuration
 @EnableWebSecurity
 public class WebSecurityConfig {
 
     private final JwtAuthFilter jwtAuthFilter;
+    private final JwtProperties jwtProperties;
 
     @Value("${codecritic.cors.allowed-origins:*}")
     private String allowedOrigins;
 
-    public WebSecurityConfig(JwtAuthFilter jwtAuthFilter) {
+    public WebSecurityConfig(JwtAuthFilter jwtAuthFilter, JwtProperties jwtProperties) {
         this.jwtAuthFilter = jwtAuthFilter;
+        this.jwtProperties = jwtProperties;
     }
 
     @Bean
@@ -44,7 +47,7 @@ public class WebSecurityConfig {
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/login", "/api/auth/register", "/api/config", "/health", "/ready", "/error").permitAll()
+                        .requestMatchers(jwtProperties.getPermitAllPaths()).permitAll()
                         .requestMatchers("/css/**", "/js/**", "/templates/**").permitAll()
                         .requestMatchers("/", "/index.html", "/review", "/review.html",
                                 "/repository", "/repository.html", "/debug", "/debug.html").permitAll()
@@ -63,7 +66,10 @@ public class WebSecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
         if (allowedOrigins != null && !allowedOrigins.isBlank() && !"*".equals(allowedOrigins)) {
-            config.setAllowedOrigins(List.of(allowedOrigins.split(",")));
+            config.setAllowedOrigins(
+                    List.of(allowedOrigins.split(",")).stream()
+                            .map(String::trim)
+                            .collect(Collectors.toList()));
         } else {
             config.setAllowedOriginPatterns(List.of("*"));
         }

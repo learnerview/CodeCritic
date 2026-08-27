@@ -3,9 +3,13 @@ package com.codecritic.controller;
 import com.codecritic.dto.*;
 import com.codecritic.metrics.AnalysisMetrics;
 import com.codecritic.service.AnalysisService;
-import io.github.learnerview.simplydone4j.dto.JobSubmissionResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import io.github.learnerview.simplydone4j.dto.JobResponse;
+import io.github.learnerview.simplydone4j.dto.JobSubmissionResponse;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.Authentication;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -91,8 +95,9 @@ public class AnalysisController {
             return ResponseEntity.badRequest().build();
         }
         try {
+            String producer = getProducer();
             JobSubmissionResponse job = analysisService.submitAnalysisJob("complexity-analysis",
-                    Map.of("code", req.code()));
+                    Map.of("code", req.code()), producer);
             return ResponseEntity.accepted().body(Map.of("jobId", job.getJobId(), "status", job.getStatus()));
         } catch (Exception e) {
             log.error("Failed to submit complexity job", e);
@@ -106,8 +111,9 @@ public class AnalysisController {
             return ResponseEntity.badRequest().build();
         }
         try {
+            String producer = getProducer();
             JobSubmissionResponse job = analysisService.submitAnalysisJob("bug-detection",
-                    Map.of("code", req.code()));
+                    Map.of("code", req.code()), producer);
             return ResponseEntity.accepted().body(Map.of("jobId", job.getJobId(), "status", job.getStatus()));
         } catch (Exception e) {
             log.error("Failed to submit bug detection job", e);
@@ -118,11 +124,19 @@ public class AnalysisController {
     @GetMapping("/jobs/{jobId}")
     public ResponseEntity<?> getJobResult(@PathVariable String jobId) {
         try {
-            var response = analysisService.getJobResult(jobId);
-            if (response != null) {
-                return ResponseEntity.ok(response);
+            Object response = analysisService.getJobResult(jobId);
+            if (response == null) {
+                return ResponseEntity.notFound().build();
             }
-            return ResponseEntity.notFound().build();
+            if (response instanceof JobResponse job) {
+                // Only the job's owner may read its payload/result (avoids IDOR).
+                String expectedProducer = getProducer() + "-" + job.getJobType();
+                if (!expectedProducer.equals(job.getProducer())) {
+                    log.warn("User {} attempted to access job {} owned by {}", getProducer(), jobId, job.getProducer());
+                    return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+                }
+            }
+            return ResponseEntity.ok(response);
         } catch (Exception e) {
             log.error("Failed to retrieve job {}", jobId, e);
             return ResponseEntity.internalServerError().build();
@@ -139,13 +153,22 @@ public class AnalysisController {
         String parameters = req.parameters() != null ? req.parameters() : "";
         String code = req.code() != null ? req.code() : "";
         try {
+            String producer = getProducer();
             JobSubmissionResponse job = analysisService.submitAnalysisJob("test-generation",
                     Map.of("className", className, "methodName", methodName,
-                            "parameters", parameters, "code", code));
+                            "parameters", parameters, "code", code), producer);
             return ResponseEntity.accepted().body(Map.of("jobId", job.getJobId(), "status", job.getStatus()));
         } catch (Exception e) {
             log.error("Failed to submit test generation job", e);
             return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
         }
+    }
+
+    private String getProducer() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.getPrincipal() != null && !"anonymous".equals(auth.getPrincipal())) {
+            return auth.getPrincipal().toString();
+        }
+        return "codecritic-anonymous";
     }
 }

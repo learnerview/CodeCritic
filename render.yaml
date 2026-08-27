@@ -24,11 +24,6 @@ services:
     maxmemoryPolicy: allkeys-lru
     ipAllowList: []
 
-  - type: mongodb
-    name: codecritic-mongodb
-    plan: free
-    ipAllowList: []
-
   - type: web
     name: codecritic-java
     runtime: docker
@@ -38,6 +33,8 @@ services:
     dockerfilePath: java-server/Dockerfile
     envVars:
       - fromGroup: codecritic-auth
+      - key: SPRING_PROFILES_ACTIVE
+        value: "prod"
       - key: PYTHON_AGENT_URL
         value: https://codecritic-python.onrender.com
       - key: SIMPLYDONE4J_ENABLED
@@ -53,12 +50,12 @@ services:
         value: "2"
       - key: SIMPLYDONE4J_EXECUTOR_QUEUE_CAPACITY
         value: "20"
-      - key: SPRING_DATA_MONGODB_URI
-        fromService:
-          type: mongodb
-          name: codecritic-mongodb
-          property: connectionString
       - key: REDIS_URL
+        fromService:
+          type: redis
+          name: codecritic-redis
+          property: connectionString
+      - key: spring.data.redis.url
         fromService:
           type: redis
           name: codecritic-redis

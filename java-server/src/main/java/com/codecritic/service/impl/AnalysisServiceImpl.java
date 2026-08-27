@@ -1,6 +1,5 @@
 package com.codecritic.service.impl;
 
-import com.codecritic.analysis.AnalysisStrategyFactory;
 import com.codecritic.analysis.ComplexityAnalyzer;
 import com.codecritic.analysis.BugDetector;
 import com.codecritic.analysis.TestGenerator;
@@ -13,6 +12,7 @@ import com.codecritic.service.AnalysisService;
 import io.github.learnerview.simplydone4j.dto.JobSubmissionResponse;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -64,6 +64,9 @@ public class AnalysisServiceImpl implements AnalysisService {
     public BugReport findBugs(String code) {
         long started = System.nanoTime();
         try {
+            if (bugDetector == null) {
+                return new BugReport(List.of());
+            }
             return new BugReport(bugDetector.detect(code));
         } finally {
             metrics.record("bugs", (System.nanoTime() - started) / 1_000_000);
@@ -80,9 +83,9 @@ public class AnalysisServiceImpl implements AnalysisService {
         }
     }
 
-    @Override
-    public JobSubmissionResponse submitAnalysisJob(String jobType, Map<String, Object> payload) {
-        return jobCoordinator.submit(jobType, payload);
+@Override
+    public JobSubmissionResponse submitAnalysisJob(String jobType, Map<String, Object> payload, String producer) {
+        return jobCoordinator.submit(jobType, payload, producer);
     }
 
     @Override

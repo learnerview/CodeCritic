@@ -110,7 +110,8 @@ public class JavaParserTestGenerator implements TestGenerator {
     private String exampleLiteralForType(String typeValue) {
         String type = typeValue == null ? "" : typeValue.trim();
         if (type.isEmpty()) return "null";
-        return switch (type) {
+        String simple = type.substring(type.lastIndexOf('.') + 1);
+        return switch (simple) {
             case "byte", "short", "int", "long", "Byte", "Short", "Integer", "Long" -> "1";
             case "float", "double", "Float", "Double" -> "1.0";
             case "boolean", "Boolean" -> "true";

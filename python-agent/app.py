@@ -40,12 +40,6 @@ class ReviewResponse(BaseModel):
     review: str
 
 
-class ReviewErrorResponse(BaseModel):
-    """Structured error payload returned when review synthesis fails."""
-
-    error: str
-
-
 class TestGenerationRequest(BaseModel):
     code: str
 
@@ -138,9 +132,10 @@ METRICS: dict[str, object] = {
 
 def is_java_code(code: str) -> bool:
     """Basic heuristic to detect if the code is Java."""
-    if len(code) < 10: return False
-    indicators = ["class ", "package ", "import ", "void ", "public ", "private "]
-    # Require at least two indicators to reduce false positives
+    if not code or len(code) < 10:
+        return False
+    indicators = ["class ", "package ", "import ", "void ", "public ", "private ", "protected ",
+                  ";", "{", "static ", "return ", "new ", "interface ", "enum ", "@Override"]
     hits = sum(1 for ind in indicators if ind in code)
     return hits >= 2
 
@@ -250,8 +245,8 @@ def ready() -> dict:
     }
 
 
-@app.post("/review", response_model=ReviewResponse | ReviewErrorResponse)
-def review(request: ReviewRequest) -> ReviewResponse | ReviewErrorResponse:
+@app.post("/review", response_model=ReviewResponse)
+def review(request: ReviewRequest) -> ReviewResponse:
     if not is_java_code(request.code):
         logger.warn("Rejected non-Java code submission", extra={"requestId": "none"})
         raise HTTPException(status_code=400, detail="Only Java code is supported for review")
@@ -265,19 +260,21 @@ def review(request: ReviewRequest) -> ReviewResponse | ReviewErrorResponse:
     try:
         return ReviewResponse(review=run_review_pipeline(request.code))
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        logger.error("Review pipeline failed", extra={"requestId": "none", "error": str(exc)})
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
-@app.post("/generate-tests", response_model=TestGenerationResponse | ReviewErrorResponse)
-def generate_tests(request: TestGenerationRequest) -> TestGenerationResponse | ReviewErrorResponse:
+@app.post("/generate-tests", response_model=TestGenerationResponse)
+def generate_tests(request: TestGenerationRequest) -> TestGenerationResponse:
     try:
         return TestGenerationResponse(tests=generate_full_test_suite(request.code))
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        logger.error("Test generation failed", extra={"requestId": getattr(request.state, "request_id", "none"), "error": str(exc)})
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
-@app.post("/analyze-repository", response_model=RepositoryAnalysisResponse | ReviewErrorResponse)
-def analyze_repository(request: RepositoryAnalysisRequest) -> RepositoryAnalysisResponse | ReviewErrorResponse:
+@app.post("/analyze-repository", response_model=RepositoryAnalysisResponse)
+def analyze_repository(request: RepositoryAnalysisRequest) -> RepositoryAnalysisResponse:
     try:
         result = analyze_github_repository(
             repo_url=request.repoUrl,
@@ -287,11 +284,12 @@ def analyze_repository(request: RepositoryAnalysisRequest) -> RepositoryAnalysis
         )
         return RepositoryAnalysisResponse(**result)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        logger.error("Repository analysis failed", extra={"requestId": getattr(request.state, "request_id", "none"), "error": str(exc)})
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
-@app.post("/debug", response_model=DebugResponse | ReviewErrorResponse)
-def debug_code(request: DebugRequest) -> DebugResponse | ReviewErrorResponse:
+@app.post("/debug", response_model=DebugResponse)
+def debug_code(request: DebugRequest) -> DebugResponse:
     try:
         diagnosis = analyze_debug_issue(
             code=request.code,
@@ -300,4 +298,5 @@ def debug_code(request: DebugRequest) -> DebugResponse | ReviewErrorResponse:
         )
         return DebugResponse(diagnosis=diagnosis)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        logger.error("Debug analysis failed", extra={"requestId": getattr(request.state, "request_id", "none"), "error": str(exc)})
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
