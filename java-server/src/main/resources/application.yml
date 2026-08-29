@@ -21,6 +21,11 @@ spring:
   data:
     mongodb:
       uri: ${SPRING_DATA_MONGODB_URI:mongodb://localhost:27017/codecritic}
+  redis:
+    # Single source of truth for the job queue's Redis connection.
+    # Set REDIS_URL (e.g. rediss://<user>:<pass>@<host>:6379) in the environment;
+    # SimplyDone4J now uses this factory (see CodeCriticApplication excludes).
+    url: ${REDIS_URL:redis://localhost:6379}
   servlet:
     multipart:
       max-file-size: 1MB

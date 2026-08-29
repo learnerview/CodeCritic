@@ -1,13 +1,14 @@
 package com.codecritic.config;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.data.redis.LettuceClientConfigurationBuilderCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
-import org.springframework.data.redis.core.StringRedisTemplate;
 
 import java.net.URI;
 import java.time.Duration;
@@ -33,9 +34,17 @@ public class RedisConfig {
         return builder -> builder.commandTimeout(Duration.ofSeconds(5));
     }
 
+    @Value("${spring.redis.url:}")
+    private String redisUrlProperty;
+
     @Bean
+    @Primary
     public RedisConnectionFactory redisConnectionFactory() {
-        String redisUrl = System.getenv("REDIS_URL");
+        // Prefer the Spring property (which can be bound to the REDIS_URL env in application.yml),
+        // then fall back to the raw env var, then to a local default.
+        String redisUrl = (redisUrlProperty != null && !redisUrlProperty.isBlank())
+                ? redisUrlProperty
+                : System.getenv("REDIS_URL");
 
         if (redisUrl == null || redisUrl.isBlank()) {
             redisUrl = "redis://localhost:6379";
@@ -69,10 +78,5 @@ public class RedisConfig {
         }
 
         return new LettuceConnectionFactory(serverConfig, clientConfigBuilder.build());
-    }
-
-    @Bean
-    public StringRedisTemplate stringRedisTemplate(RedisConnectionFactory connectionFactory) {
-        return new StringRedisTemplate(connectionFactory);
     }
 }
