@@ -15,7 +15,7 @@
 
 For each `MethodDeclaration`, the visitor resets a `current` counter to 1 and records the running max after visiting the method body. **Cognitive complexity** is a simple scaled estimate (`max(1, cyclomatic / 2)`).
 
-**Fallback (graceful degradation):** if JavaParser cannot parse the source, `fallbackHeuristic` runs. It first strips `// line`, `/* block */` comments, `"..."` string literals, and `'...'` char literals so tokens inside comments or strings are not miscounted, then counts `if(`, `for(`, `while(`, `case `, `&&`, `||`, `catch(`, `?:`, and `default:`.
+**Fallback (graceful degradation):** if JavaParser cannot parse the source, `fallbackHeuristic` runs. It first strips `// line`, `/* block */` comments, `"..."` string literals, and `'...'` char literals so tokens inside comments or strings are not miscounted, then counts `if(`, `for(`, `while(`, `case `, `&&`, `||`, `catch(`, `?:`, and `default:`. The stripping is escape-aware: a backslash in a string/char literal (e.g. `\\"` or `'\''`) skips the escaped character so an escaped quote does not prematurely end the literal.
 
 ## 2. Bug detection (`/api/bugs`)
 
@@ -24,7 +24,7 @@ For each `MethodDeclaration`, the visitor resets a `current` counter to 1 and re
 ### Pattern detector (`PatternBugDetector`)
 Line-scanning heuristics:
 - **Division by zero**: a line matching `\d+\s*/\s*0` (digits divided by zero) → `DivisionByZeroRisk`. Requiring digits around the `/` and `0` reduces false positives from comments or unrelated `/ 0` text.
-- **Unsafe `.toString()`**: a line with `.toString()` that has no nearby `!= null` or `Objects.toString` guard → `NullPointerRisk`.
+- **Unsafe `.toString()`**: a line with `.toString()` that has no `!= null` guard on it → `NullPointerRisk`.
 
 ### SpotBugs (`SpotBugsBugDetector` + `SpotBugsRunner`)
 Best-effort: if a JDK and `spotbugs` CLI are available, the source is compiled in a unique `UUID` temp directory and SpotBugs is run over it. Findings are wrapped as `SpotBugsFinding`. Blocking is never done — failures or absence of the tool return no findings and never fail the request.

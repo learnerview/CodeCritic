@@ -1,12 +1,12 @@
 # Architecture
 
-CodeCritic is split into two services connected over HTTP: a **Java analysis engine** and a **Python LLM orchestrator**. This split keeps deterministic analysis on the JVM (where JavaParser and SpotBugs live) and AI orchestration in Python (where the LLM ecosystem is strongest).
+CodeCritic is split into two services connected over HTTP: a **Java analysis engine** and a **Python LLM orchestrator**. This split keeps deterministic analysis on the JVM (where JavaParser and our pattern detector live) and AI orchestration in Python (where the LLM ecosystem is strongest).
 
 ## Services
 
 | Service | Stack | Responsibility |
 |---------|-------|----------------|
-| `java-server` | Spring Boot 3, Java 21, JavaParser, SpotBugs, jjwt | Deterministic analysis: complexity, bug detection, JUnit scaffolds; auth; optional Redis-backed async jobs |
+| `java-server` | Spring Boot 3, Java 21, JavaParser, jjwt | Deterministic analysis: complexity, bug detection, JUnit scaffolds; auth; optional Redis-backed async jobs |
 | `python-agent` | FastAPI, Pydantic, httpx | Orchestrates the Java service, then synthesizes reviews/test-suites via an LLM (Groq primary, OpenAI fallback) |
 
 ## Control flow
@@ -52,7 +52,7 @@ New analysis types are added by implementing an `AnalysisStrategy` and registeri
 
 ### Thread-safety & concurrency
 
-- **SpotBugs isolation**: each run writes to a fresh `UUID` temp directory (`SpotBugsRunner`), preventing collisions under parallel reviews.
+- **SpotBugs isolation**: each run writes to a fresh `UUID` temp directory (`SpotBugsRunner`), preventing collisions under parallel reviews. Compilation only happens if a JDK compiler and the `spotbugs` CLI are available — in the deployed JRE image they are not, so SpotBugs is best-effort and findings come from the pattern detector.
 - **SpotBugs cache**: `CachedSpotBugsBugDetector` keys results by SHA-256 of source + detector version. It is a synchronized, access-ordered `LinkedHashMap` bounded to 256 entries with LRU eviction, so repeated analysis of identical code skips recompilation without unbounded memory growth.
 
 ### Idempotent async jobs

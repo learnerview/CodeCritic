@@ -82,8 +82,12 @@ public class JavaParserComplexityAnalyzer implements ComplexityAnalyzer {
             } else if (c == '\'') {
                 // skip char literal
                 i++;
-                while (i < n && code.charAt(i) != '\'') i++;
-                i++;
+                while (i < n) {
+                    char sc = code.charAt(i);
+                    if (sc == '\\') { i += 2; continue; }
+                    if (sc == '\'') { i++; break; }
+                    i++;
+                }
                 sb.append(' ');
             } else if (c == '/' && i + 1 < n && code.charAt(i + 1) == '/') {
                 // skip line comment

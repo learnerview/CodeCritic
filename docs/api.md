@@ -1,19 +1,23 @@
 # API Reference
 
+These are the endpoints we expose for CodeCritic. On our live demo the Java server is at `https://codecritic-java.onrender.com`; when you host your own instance, the base URLs are just wherever you run the two services (`JAVA_SERVER_URL` / port assignments — see [docs/deployment.md](docs/deployment.md)).
+
 ## Java server (`:8080`)
 
 All `/api/**` endpoints require a JWT except `/api/auth/*` and `/api/config`, which are public. `GET /health`, `GET /ready`, and `/error` are also public.
 
 ### Auth
 
+There are no preset accounts — everyone registers their own. Then you log in with those same credentials:
+
 ```bash
+# Create your account (returns a token too)
+curl -X POST http://localhost:8080/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"username":"me","password":"secret"}'
+
 # Login → returns {"token":"<jwt>", ...}
 curl -X POST http://localhost:8080/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"admin"}'
-
-# Register
-curl -X POST http://localhost:8080/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{"username":"me","password":"secret"}'
 
@@ -29,7 +33,7 @@ curl -X POST http://localhost:8080/api/complexity \
   -d '{"code":"public class A { public int f(int x){ if(x>0){ return x; } return 0; } }"}'
 # → {"cyclomaticComplexity":2,"cognitiveComplexity":1}
 
-# Bug findings (pattern + cached SpotBugs)
+# Bug findings (pattern detector, best-effort SpotBugs when installed)
 curl -X POST http://localhost:8080/api/bugs \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"code":"public class A { public int f(int x){ return 10 / x; } }"}'
@@ -52,7 +56,7 @@ curl -X POST http://localhost:8080/api/jobs/complexity \
 curl http://localhost:8080/api/jobs/<id> -H "Authorization: Bearer $TOKEN"
 ```
 
-Jobs are idempotent: retrying the same type + payload yields the same idempotency key (SHA-256), so the queue does not create duplicates.
+Jobs are idempotent: retrying the same type + payload yields the same idempotency key (SHA-256), so the queue does not create duplicates. Async jobs need the scheduler/Redis enabled on your instance (`REDIS_URL` + `SIMPLYDONE4J_SCHEDULER_ENABLED`) — on Render we enable them via the managed Redis service, but the sync endpoints above work without them.
 
 ### Metrics
 
@@ -69,7 +73,7 @@ curl http://localhost:8080/api/config   # public; tells the browser where the ag
 
 ## Python agent (`:8000`)
 
-No auth (intended for trusted/internal use; see `docs/security.md`).
+No auth — intended for trusted/internal use between our own services (see [docs/security.md](docs/security.md)).
 
 ```bash
 # Review pipeline (deterministic analysis + LLM review)
@@ -97,7 +101,10 @@ curl http://localhost:8000/ready    # readiness incl. LLM connectivity
 curl http://localhost:8000/metrics  # request/status/latency metrics
 ```
 
-## Request limits & rate limiting (Python)
+## Limits you can tune on your own instance
 
 - `MAX_REQUEST_BYTES` (default `1500000`) — payloads larger than this get `413`.
 - Rate limiting per IP: `RATE_LIMIT_REQUESTS` (default `60`) per `RATE_LIMIT_WINDOW_SECONDS` (default `60`) → `429` when exceeded.
+- Which endpoints are public (`permitAllPaths` in `JwtProperties`) and how long tokens live (`JWT_EXPIRATION_MS`).
+
+See [docs/deployment.md](docs/deployment.md) for the full list of variables.

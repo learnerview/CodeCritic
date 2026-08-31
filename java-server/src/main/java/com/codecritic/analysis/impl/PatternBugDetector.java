@@ -29,7 +29,7 @@ public class PatternBugDetector implements BugDetector {
                 bugs.add(new BugFinding("DivisionByZeroRisk", i + 1,
                         "Possible division by zero", "Check divisor for zero"));
             }
-            if (line.contains(".toString()") && !line.contains("!= null") && !line.contains("Objects.toString")) {
+            if (line.contains(".toString()") && !line.contains("!= null")) {
                 bugs.add(new BugFinding("NullPointerRisk", i + 1,
                         "Calling toString() might NPE if obj is null",
                         "Add null check or use String.valueOf()"));

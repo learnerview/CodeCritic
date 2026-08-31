@@ -16,9 +16,40 @@ import java.util.concurrent.TimeUnit;
 /**
  * Runs SpotBugs against a temporary compilation of the submitted source.
  *
- * Encapsulates all filesystem and subprocess concerns (SRP). Compilation or
- * SpotBugs failures are swallowed and reported as empty results, keeping the
- * analysis API resilient when SpotBugs is not installed.
+ * <p>SpotBugs performs static analysis on compiled Java bytecode rather than
+ * directly analyzing the source code. Therefore, the submitted source is first
+ * written to a temporary {@code .java} file and compiled into {@code .class}
+ * files before being passed to SpotBugs.</p>
+ *
+ * <p>SpotBugs can detect potential issues such as:</p>
+ * <ul>
+ *     <li>Possible null pointer dereferences</li>
+ *     <li>Dead stores (values assigned but never used)</li>
+ *     <li>Resource leaks</li>
+ *     <li>Incorrect implementations of {@code equals()} and {@code hashCode()}</li>
+ *     <li>Suspicious object comparisons using {@code ==}</li>
+ *     <li>Potential synchronization and concurrency issues</li>
+ * </ul>
+ *
+ * <p>Example flow:</p>
+ *
+ * <pre>
+ * Submitted Java source
+ *         ↓
+ * ClassUnderTest.java
+ *         ↓
+ * JavaCompiler (javac)
+ *         ↓
+ * ClassUnderTest.class
+ *         ↓
+ * SpotBugs static analysis
+ *         ↓
+ * Raw text findings returned as List&lt;String&gt;
+ * </pre>
+ *
+ * <p>Compilation or SpotBugs failures are swallowed and reported as empty
+ * results, keeping the analysis API resilient when the Java compiler or
+ * SpotBugs executable is not installed.</p>
  */
 @Component
 public class SpotBugsRunner {
@@ -54,6 +85,9 @@ public class SpotBugsRunner {
             }
 
             ProcessBuilder pb = new ProcessBuilder("spotbugs", "-textui", classesDir.toString());
+
+            // Merges stderr into stdout so both normal output and errors can be read
+            // from process.getInputStream() using a single BufferedReader.
             pb.redirectErrorStream(true);
             Process process;
             try {

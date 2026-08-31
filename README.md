@@ -1,14 +1,23 @@
 # CodeCritic
 
-CodeCritic is a hybrid agentic code-review system that pairs a **Python LLM orchestrator** with a **Java analysis engine**. The Java layer performs deterministic analysis (complexity, bug heuristics, JUnit scaffolds, optional SpotBugs), while the Python layer plans, synthesizes, and orchestrates LLM reviews (Groq primary, OpenAI fallback).
+CodeCritic is our hybrid agentic code-review system. We pair a **Java analysis engine** with a **Python LLM orchestrator**: the Java layer does the deterministic work (complexity, bug heuristics, JUnit scaffolds, best-effort SpotBugs), and the Python layer plans and synthesizes the human-readable review with an LLM (Groq primary, OpenAI fallback). Putting the deterministic analysis on real ASTs and keeping the LLM for synthesis is exactly the split we want — the machine does what machines are good at, and the LLM only writes the review.
 
-## Highlights
+## Live demo
 
-- **Hybrid, not black-box**: static analysis runs deterministically on real ASTs; the LLM only synthesizes findings into a readable review.
-- **Concurrent & thread-safe**: every SpotBugs run uses a unique temp directory; results are cached by source hash behind an LRU to stay bounded and collision-free.
-- **Distributed-ready**: Java analysis service + Python agent talk over HTTP; optional async job queue via Redis/SimplyDone4J.
-- **Async jobs with idempotency**: job submissions are keyed deterministically (SHA-256 of type + payload), so retries don't duplicate work.
-- **Stateless JWT auth** with environment-injected secrets.
+We run the Java server on Render's free tier:
+
+- **Dashboard:** <https://codecritic-java.onrender.com/> — register an account and sign in.
+- The Python agent and LLM (Groq) are wired in, so you can register, paste a class, and see a review end-to-end.
+
+> Note: Render's free tier sleeps after ~15 minutes of inactivity, so the first load after a break can take 30–60 seconds to wake up.
+
+## What we built
+
+- **Hybrid, not black-box** — static analysis runs deterministically on real ASTs (JavaParser) and finds obvious risks with a fast pattern detector; the LLM only turns findings into a review, it never invents them.
+- **Concurrent and thread-safe** — every SpotBugs run gets a unique temp directory and results are cached by source hash behind an LRU, so memory stays bounded and we never collide under parallel reviews.
+- **Distributed-ready** — Java service and Python agent talk over HTTP; we can add an async job queue backed by Redis/SimplyDone4J whenever we need it.
+- **Async jobs with idempotency** — job submissions are keyed deterministically (SHA-256 of type + payload), so retries never duplicate work.
+- **Stateless JWT auth** — secrets come from the environment, tokens are stateless, and the whole thing scales horizontally.
 
 ## Quick start (Docker)
 
@@ -16,7 +25,8 @@ CodeCritic is a hybrid agentic code-review system that pairs a **Python LLM orch
 docker compose up --build
 ```
 
-- Dashboard: `http://localhost:8080/` (default login `admin` / `admin`)
+- Dashboard: `http://localhost:8080/` (register an account on first visit)
+
 - See [docs/deployment.md](docs/deployment.md) for local (non-Docker) and Render deployment.
 
 ## Architecture at a glance
@@ -35,25 +45,30 @@ Java Server (:8080)          Python Agent (:8000)
                                 Natural-language review / tests
 ```
 
-Detailed explanation and diagrams: [docs/architecture.md](docs/architecture.md)
+We document the full design and data flow in [docs/architecture.md](docs/architecture.md).
 
 ## Repo layout
 
 - `java-server/` – Spring Boot analysis microservice (AST complexity, bug detection, test generation, JWT security, optional Redis jobs)
 - `python-agent/` – FastAPI LLM orchestrator + HTTP wrappers
-- `docs/` – architecture, API reference, algorithms, security, deployment, and known limitations
+- `docs/` – our design, API reference, algorithms, security, deployment, and known limitations
 - `docker-compose.yml`, `render.yaml` – deployment
 - `.env.example` – environment variables
 
 ## Quick API overview
 
-All Java `/api/**` endpoints require a JWT (except auth/config/health).
+All Java `/api/**` endpoints require a JWT (except auth/config/health). Use the live demo URL below, or `http://localhost:8080` locally.
 
 ```bash
+# create your account (no preset users) — reuse these creds in the login below
+curl -X POST http://localhost:8080/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"username":"me","password":"secret"}'
+
 # get a token
 curl -X POST http://localhost:8080/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"admin"}'
+  -d '{"username":"me","password":"secret"}'
 
 # deterministic analysis
 curl -X POST http://localhost:8080/api/complexity -H "Authorization: Bearer <TOKEN>" \
@@ -85,12 +100,12 @@ Full reference and examples: [docs/api.md](docs/api.md)
 | [docs/analysis-algorithms.md](docs/analysis-algorithms.md) | Complexity, bug-detection, and test-generation internals |
 | [docs/security.md](docs/security.md) | JWT model, threat model, secrets guidance |
 | [docs/deployment.md](docs/deployment.md) | Docker, local, and Render deploy steps |
-| [docs/known-limitations.md](docs/known-limitations.md) | Acknowledged limitations & future work |
-| [docs/sample-analysis-report.md](docs/sample-analysis-report.md) | Real repository-analysis output |
+| [docs/known-limitations.md](docs/known-limitations.md) | Trade-offs we accept & our roadmap |
+| [docs/sample-analysis-report.md](docs/sample-analysis-report.md) | A real repository-analysis output |
 
 ## Environment variables
 
-Core ones: `GROQ_API_KEY` (required), `OPENAI_API_KEY` (fallback), `JAVA_SERVER_URL`, `AUTH_USERNAME`/`AUTH_PASSWORD`, `JWT_SECRET`, `CORS_ALLOW_ORIGINS`. See [docs/deployment.md](docs/deployment.md) and `.env.example` for the full list.
+The core ones: `GROQ_API_KEY` (required), `OPENAI_API_KEY` (fallback), `JAVA_SERVER_URL`, `AUTH_USERNAME`/`AUTH_PASSWORD`, `JWT_SECRET`, `CORS_ALLOW_ORIGINS`. See [docs/deployment.md](docs/deployment.md) and `.env.example` for the full list.
 
 ## Testing
 
