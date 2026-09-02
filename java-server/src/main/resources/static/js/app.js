@@ -776,15 +776,25 @@ function renderStructured(kind, data) {
         }
         return `
             <div class="findings">
-                ${bugs.map((b) => `
-                    <div class="finding">
+                <div class="findings-note">
+                    ⚠️ These are <em>likely</em> bugs, not confirmed ones — review each before acting.
+                    Findings from <a href="https://spotbugs.github.io/" target="_blank" rel="noopener">SpotBugs</a>
+                    are static-analysis heuristics and can include false positives.
+                </div>
+                ${bugs.map((b) => {
+                    const isCompile = b.type === 'COMPILATION_ERROR';
+                    const isPattern = b.type === 'NullPointerRisk';
+                    return `
+                    <div class="finding ${isCompile ? 'finding-warn' : ''}">
                         <div class="finding-head">
-                            <span class="badge badge-${b.type === 'NullPointerRisk' ? 'warn' : 'danger'}">${esc(b.type || 'Issue')}</span>
-                            <span class="finding-line">Line ${esc(b.line ?? '?')}</span>
+                            <span class="badge badge-${isCompile || isPattern ? 'warn' : 'danger'}">${esc(b.type || 'Issue')}</span>
+                            ${b.line ? `<span class="finding-line">Line ${esc(b.line)}</span>` : ''}
+                            ${isCompile ? '' : `<span class="badge badge-info">${isPattern ? 'pattern' : 'SpotBugs'}</span>`}
                         </div>
                         <p class="finding-msg">${esc(b.message || '')}</p>
                         <p class="finding-sugg"><strong>Suggestion:</strong> ${esc(b.suggestion || '—')}</p>
-                    </div>`).join('')}
+                    </div>`;
+                }).join('')}
             </div>`;
     }
     if (kind === 'test') {

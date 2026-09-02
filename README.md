@@ -1,6 +1,6 @@
 # CodeCritic
 
-CodeCritic is our hybrid agentic code-review system. We pair a **Java analysis engine** with a **Python LLM orchestrator**: the Java layer does the deterministic work (complexity, bug heuristics, JUnit scaffolds, best-effort SpotBugs), and the Python layer plans and synthesizes the human-readable review with an LLM (Groq primary, OpenAI fallback). Putting the deterministic analysis on real ASTs and keeping the LLM for synthesis is exactly the split we want — the machine does what machines are good at, and the LLM only writes the review.
+CodeCritic is our hybrid agentic code-review system. We pair a **Java analysis engine** with a **Python LLM orchestrator**: the Java layer does the deterministic work (complexity, bug heuristics, JUnit scaffolds, SpotBugs), and the Python layer plans and synthesizes the human-readable review with an LLM (Groq primary, OpenAI fallback). Putting the deterministic analysis on real ASTs and keeping the LLM for synthesis is exactly the split we want — the machine does what machines are good at, and the LLM only writes the review.
 
 ## Live demo
 
@@ -32,17 +32,23 @@ docker compose up --build
 ## Architecture at a glance
 
 ```
-Browser (CodeMirror UI)
-   │  login → JWT
-   ▼
-Java Server (:8080)          Python Agent (:8000)
-  JWT filter                    FastAPI orchestrator
-  AnalysisController            ├─ calls Java REST (with token)
-  ├─ /complexity                ├─ collects findings
-  ├─ /bugs                      └─ LLM synthesis (Groq→OpenAI)
-  ├─ /generate-test                 │
-  └─ /jobs/* (Redis queue)          ▼
-                                Natural-language review / tests
+  Browser (CodeMirror UI)
+       │
+       ├── login / config ──→ Java Server (:8080)
+       │                        JWT filter · AnalysisController
+       │                        ├─ /complexity  (deterministic)
+       │                        ├─ /bugs        (pattern + SpotBugs)
+       │                        ├─ /generate-test
+       │                        └─ /jobs/*      (Redis queue)
+       │
+       └── AI features ──────→ Python Agent (:8000)
+                                    │
+                                    ├─ calls Java REST (with token) → /complexity /bugs /generate-test
+                                    ├─ collects findings
+                                    └─ LLM synthesis (Groq → OpenAI)
+                                         │
+                                         ▼
+                                  Natural-language review / tests
 ```
 
 We document the full design and data flow in [docs/architecture.md](docs/architecture.md).

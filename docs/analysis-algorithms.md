@@ -27,7 +27,7 @@ Line-scanning heuristics:
 - **Unsafe `.toString()`**: a line with `.toString()` that has no `!= null` guard on it → `NullPointerRisk`.
 
 ### SpotBugs (`SpotBugsBugDetector` + `SpotBugsRunner`)
-Best-effort: if a JDK and `spotbugs` CLI are available, the source is compiled in a unique `UUID` temp directory and SpotBugs is run over it. Findings are wrapped as `SpotBugsFinding`. Blocking is never done — failures or absence of the tool return no findings and never fail the request.
+SpotBugs compiles the submitted source in a unique `UUID` temp directory and runs `spotbugs -textui` over the compiled classes. Each finding line is parsed into a `BugFinding` with the SpotBugs bug type (e.g. `NP_NULL_ON_SOME_PATH`, `IL_INFINITE_LOOP`) extracted from the output. Findings are wrapped as `SpotBugsFinding`. Blocking is never done — failures or absence of the tool return no findings and never fail the request.
 
 ### Caching (`CachedSpotBugsBugDetector`)
 SpotBugs is expensive (compile + subprocess), so results are cached:

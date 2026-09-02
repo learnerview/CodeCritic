@@ -320,7 +320,10 @@ def generate_full_test_suite(code: str, summary: tuple | None = None) -> str:
         "Reference deterministic templates (improve them into full tests):\n"
         f"{template_context or 'No templates available.'}\n"
     )
+    configured = LLM.provider_status()
     try:
+        if not (configured.get("groqConfigured") or configured.get("openaiConfigured")):
+            raise RuntimeError("no LLM API key configured")
         raw = _complete_with_continuation(prompt, max_tokens=TEST_MAX_TOKENS)
         java_code = _extract_java_code_block(raw)
         if "class " not in java_code or "@Test" not in java_code:
@@ -330,7 +333,11 @@ def generate_full_test_suite(code: str, summary: tuple | None = None) -> str:
         block = "\n\n".join(
             f"--- Template for {name} ---\n{template}" for name, template in templates
         ) or "No deterministic templates available."
-        return f"# LLM test synthesis unavailable ({exc}); using deterministic templates.\n\n{block}"
+        if not (configured.get("groqConfigured") or configured.get("openaiConfigured")):
+            note = "Groq/OpenAI not available (no API key configured). Showing locally generated test templates."
+        else:
+            note = f"AI test synthesis failed; showing locally generated test templates. ({exc})"
+        return f"# {note}\n\n{block}"
 
 
 
@@ -701,20 +708,33 @@ def run_review_pipeline(code: str) -> str:
     - Prefer actionable, small suggestions in the final output to help developers iterate quickly.
     """
     deterministic_summary = _build_deterministic_summary(code)
-    _, _, _, parts = deterministic_summary
+    _, _, templates, parts = deterministic_summary
 
-    parts.append("--- AI GENERATED COMPLETE TEST SUITE ---")
-    parts.append(generate_full_test_suite(code, summary=deterministic_summary))
+    # Reuse the deterministic (Java-parser) templates in the review context. We do NOT
+    # call the LLM test-suite generator here: the frontend already asks for tests via a
+    # separate /generate-tests call, so doing it again here would duplicate LLM work.
+    template_context = "\n\n".join(
+        f"Method: {name}\nTemplate:\n{template}" for name, template in templates
+    )
+    parts.append("--- DIAGNOSTIC TEST TEMPLATES ---")
+    parts.append(template_context or "No deterministic templates available.")
 
-    # Synthesize final review with Groq
+    # Synthesize final review with the configured LLM (single call).
     try:
         prompt = "You are a senior Java reviewer. Produce a concise review given the following sections:\n"
         prompt += "\nCODE:\n" + code + "\n\n"
         prompt += "\nSUMMARY:\n" + "\n".join(parts) + "\n\n"
         prompt += "Provide: 1) Short summary, 2) Actionable suggestions, 3) Risk hotspots.\n"
         review = groq_complete(prompt)
+        return "\n\n".join(parts) + "\n\n--- AI REVIEW ---\n" + (review or "(no review)")
     except Exception as exc:
-        review = "LLM synthesis failed: " + str(exc)
-
-    return "\n\n".join(parts) + "\n\n--- GROQ REVIEW ---\n" + (review or "(no review)")
+        # No LLM available (or it failed): surface the deterministic results cleanly
+        # instead of returning an opaque half-LLM blob.
+        notice = (
+            "Groq/OpenAI not available right now (no API key configured, or the provider "
+            "returned an error). The deterministic analysis below was generated locally "
+            "and remains valid."
+        )
+        log_detail = str(exc) or ""
+        return "\n\n".join(parts) + f"\n\n--- AI REVIEW UNAVAILABLE ---\n{notice}\n\nDetail: {log_detail}"
 

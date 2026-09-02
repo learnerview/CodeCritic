@@ -889,6 +889,21 @@ li.CodeMirror-hint-active {
 
 .badge-danger { background: rgba(239, 68, 68, 0.15); color: #fca5a5; }
 .badge-warn { background: rgba(245, 158, 11, 0.15); color: #fcd34d; }
+.badge-info { background: rgba(96, 165, 250, 0.15); color: #93c5fd; }
+
+.findings-note {
+    padding: 10px 14px;
+    border-left: 3px solid var(--muted);
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 8px;
+    color: var(--muted);
+    font-size: 0.85rem;
+}
+
+.finding-warn {
+    border-left-color: var(--warning, #f59e0b);
+    background: rgba(245, 158, 11, 0.06);
+}
 
 .finding-line {
     color: var(--muted);

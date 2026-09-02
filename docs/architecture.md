@@ -30,13 +30,20 @@ flowchart TB
     REDIS[("Redis Queue")]:::infra
 
     User --> UI
-    UI -->|login / calls| API
-    UI -.->|review code| PY
-    PY --> API
+    UI -->|basic analysis\n/complexity /bugs /generate-test| API
+    UI -->|AI features\n/review /generate-tests /analyze-repository /debug| PY
+    PY -->|deterministic analysis\n/complexity /bugs /generate-test| API
     API --> SEC --> SVC --> STR
     SVC -->|async jobs| REDIS
     PY --> LLM --> GROQ
 ```
+
+The dashboard (served by Java at port 8080) calls **both** services directly from the browser:
+
+- **Java directly** for deterministic analysis (`/api/complexity`, `/api/bugs`, `/api/generate-test`) and auth/config
+- **Python directly** for AI-powered features (`/review`, `/generate-tests`, `/analyze-repository`, `/debug`)
+
+The Python agent then calls back into the Java server for the underlying deterministic analysis, combining those results with LLM synthesis before returning to the browser.
 
 ## Java layer (the analysis engine)
 
@@ -52,7 +59,7 @@ New analysis types are added by implementing an `AnalysisStrategy` and registeri
 
 ### Thread-safety & concurrency
 
-- **SpotBugs isolation**: each run writes to a fresh `UUID` temp directory (`SpotBugsRunner`), preventing collisions under parallel reviews. Compilation only happens if a JDK compiler and the `spotbugs` CLI are available — in the deployed JRE image they are not, so SpotBugs is best-effort and findings come from the pattern detector.
+- **SpotBugs isolation**: each run writes to a fresh `UUID` temp directory (`SpotBugsRunner`), preventing collisions under parallel reviews. The `spotbugs` CLI and `javac` are installed in the Docker image, enabling full SpotBugs analysis alongside the pattern detector.
 - **SpotBugs cache**: `CachedSpotBugsBugDetector` keys results by SHA-256 of source + detector version. It is a synchronized, access-ordered `LinkedHashMap` bounded to 256 entries with LRU eviction, so repeated analysis of identical code skips recompilation without unbounded memory growth.
 
 ### Idempotent async jobs
