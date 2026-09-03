@@ -124,7 +124,7 @@ public class SpotBugsRunner {
             // alongside this server's own JVM) does not blow past small-memory hosts
             // like the Render free tier (512 MB RAM). SpotBugs spawns its own JVM,
             // which would otherwise roughly double memory during analysis.
-            pb.environment().put("JAVA_TOOL_OPTIONS", "-Xmx128m -Xms16m");
+            pb.environment().put("JAVA_TOOL_OPTIONS", "-Xmx192m -Xms32m -XX:MaxMetaspaceSize=64m");
             Process process;
             try {
                 log.info("Starting SpotBugs subprocess for directory: {}", classesDir);
