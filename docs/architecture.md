@@ -74,7 +74,7 @@ Handlers are registered with the library at startup by `SimplyDoneHandlerRegistr
 
 `agent.py` provides typed HTTP wrappers (`get_complexity`, `find_bugs`, `generate_test`) that keep the Java calls mockable, plus the orchestration pipelines:
 
-- `run_review_pipeline` — deterministic analysis → full LLM test suite → synthesized review
+- `run_review_pipeline` — deterministic analysis (complexity, bug findings, JUnit scaffolds) → a single-call LLM synthesis of the review (the frontend already requests the full AI test suite separately via `/generate-tests`, so it is not regenerated here)
 - `generate_full_test_suite` — JUnit suite with real assertions using findings as context
 - `analyze_github_repository` — clone via codeload/API, per-file analysis, deterministic repo metrics, then LLM summary
 - `analyze_debug_issue` — source + error log + static findings → root-cause diagnosis

@@ -95,7 +95,12 @@ Create a local `.env` from `.env.example`.
 | `MAX_REQUEST_BYTES` | Python payload limit | `1500000` |
 | `LLM_TIMEOUT_SECONDS` | LLM call timeout | `60` |
 | `REDIS_URL` | Job-queue Redis | — |
+| `SPRING_DATA_MONGODB_URI` | User store (MongoDB) | `mongodb://localhost:27017/codecritic` |
+| `SIMPLYDONE4J_ENABLED` | Enable the SimplyDone4J async job layer | `true` |
 | `SIMPLYDONE4J_SCHEDULER_ENABLED` | Async scheduler (Java default `false`; the Render blueprint sets `true`) | `false` |
+| `SIMPLYDONE4J_MONITORING_ENABLED` | Job monitoring endpoints in the dashboard | `true` |
+| `SIMPLYDONE4J_EXECUTOR_CORE_POOL_SIZE` / `MAX_POOL_SIZE` / `QUEUE_CAPACITY` | Async worker pool sizing | `2` / `4` / `50` |
+| `PYTHON_AGENT_URL` | Tells the dashboard where the Python agent lives (also served by `/api/config`) | `http://localhost:8000` |
 
 ## Deploy to Render (as we do)
 

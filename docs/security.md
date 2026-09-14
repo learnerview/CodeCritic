@@ -12,10 +12,11 @@ The Java API is protected by **stateless JWT** (HS256 via jjwt):
 4. `JwtAuthFilter` parses and verifies the token on each request and populates the Spring security context. Invalid/expired tokens are logged (not silently swallowed) and leave the context unauthenticated, which yields a `401`.
 5. The signing secret comes from `JWT_SECRET` (min 32 bytes for HS256). A demo default exists only for local dev — always override it in production.
 
-**Public (permit-all) endpoints** are configurable via `JwtProperties.permitAllPaths` and default to:
+**Public (permit-all) endpoints** — the roots below are configurable via `JwtProperties.permitAllPaths` and default to:
 - `/error`, `/health`, `/ready`
 - `/api/auth/login`, `/api/auth/register`, `/api/config`
-- static assets (`/css/**`, `/js/**`, `/templates/**`) and dashboard pages (`/`, `/index.html`, `/review`, `/repository`, `/debug`, + `.html` variants)
+
+Static assets (`/css/**`, `/js/**`, `/templates/**`) and the dashboard pages (`/`, `/index.html`, `/review`, `/repository`, `/debug` and their `.html` variants) are additionally permitted in `WebSecurityConfig`, since the browser must load the UI before any token exists.
 
 `AUTH_USERNAME` / `AUTH_PASSWORD` are **not** the dashboard login — they are the service-account the Python agent uses to call the Java API (`python-agent` logs in with them to get a token). On your own instance, register a dedicated user and point these at it.
 

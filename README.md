@@ -15,7 +15,7 @@ We run the Java server on Render's free tier:
 
 - **Hybrid, not black-box** — static analysis runs deterministically on real ASTs (JavaParser) and finds obvious risks with a fast pattern detector; the LLM only turns findings into a review, it never invents them.
 - **Concurrent and thread-safe** — every SpotBugs run gets a unique temp directory and results are cached by source hash behind an LRU, so memory stays bounded and we never collide under parallel reviews.
-- **Distributed-ready** — Java service and Python agent talk over HTTP; we can add an async job queue backed by Redis/SimplyDone4J whenever we need it.
+- **Distributed-ready** — Java service and Python agent talk over HTTP, and async analysis jobs run through a Redis-backed queue (SimplyDone4J).
 - **Async jobs with idempotency** — job submissions are keyed deterministically (SHA-256 of type + payload), so retries never duplicate work.
 - **Stateless JWT auth** — secrets come from the environment, tokens are stateless, and the whole thing scales horizontally.
 
@@ -66,7 +66,7 @@ We document the full design and data flow in [docs/architecture.md](docs/archite
 All Java `/api/**` endpoints require a JWT (except auth/config/health). Use the live demo URL below, or `http://localhost:8080` locally.
 
 ```bash
-# create your account (no preset users) — reuse these creds in the login below
+# create your account
 curl -X POST http://localhost:8080/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{"username":"me","password":"secret"}'
