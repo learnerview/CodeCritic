@@ -15,6 +15,7 @@ public class JwtProperties {
     private String[] permitAllPaths = {
             "/error",
             "/health",
+            "/api/health",
             "/api/auth/login",
             "/api/auth/register",
             "/api/config"

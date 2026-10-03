@@ -35,7 +35,7 @@ pip install -r requirements.txt
 python -m uvicorn app:app --host 0.0.0.0 --port 8000
 ```
 
-Verify: `GET http://localhost:8000/ready` → `"llmConnectivity":{"ok":true}` (needs `GROQ_API_KEY`).
+Verify: `GET http://localhost:8000/ready` → `"llmConnectivity":{"ok":true}` (needs a valid `GROQ_API_KEY` or configured fallback provider). A `200` response with `"status":"degraded"` is an explicit dependency-health signal, not a successful LLM readiness result.
 
 ### Java server
 

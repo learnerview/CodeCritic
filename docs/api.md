@@ -104,6 +104,7 @@ curl http://localhost:8000/metrics  # request/status/latency metrics
 ## Limits you can tune on your own instance
 
 - `MAX_REQUEST_BYTES` (default `1500000`) — payloads larger than this get `413`.
+- Repository analysis accepts `maxFiles` from `1` through `100`; larger or invalid values are rejected with `422` before any GitHub work starts.
 - Rate limiting per IP: `RATE_LIMIT_REQUESTS` (default `60`) per `RATE_LIMIT_WINDOW_SECONDS` (default `60`) → `429` when exceeded.
 - Which endpoints are public (`permitAllPaths` in `JwtProperties`) and how long tokens live (`JWT_EXPIRATION_MS`).
 

@@ -17,7 +17,7 @@ from collections import defaultdict, deque
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agent import (
     run_review_pipeline,
@@ -31,7 +31,7 @@ from agent import (
 class ReviewRequest(BaseModel):
     """Request payload for submitting Java source to the agent."""
 
-    code: str
+    code: str = Field(min_length=10, max_length=1_500_000)
 
 
 class ReviewResponse(BaseModel):
@@ -41,7 +41,7 @@ class ReviewResponse(BaseModel):
 
 
 class TestGenerationRequest(BaseModel):
-    code: str
+    code: str = Field(min_length=1, max_length=1_500_000)
 
 
 class TestGenerationResponse(BaseModel):
@@ -49,9 +49,9 @@ class TestGenerationResponse(BaseModel):
 
 
 class RepositoryAnalysisRequest(BaseModel):
-    repoUrl: str
+    repoUrl: str = Field(min_length=1, max_length=2048)
     branch: str | None = None
-    maxFiles: int = 15
+    maxFiles: int = Field(default=15, ge=1, le=100)
     githubToken: str | None = None
 
 
@@ -64,9 +64,9 @@ class RepositoryAnalysisResponse(BaseModel):
 
 
 class DebugRequest(BaseModel):
-    code: str
-    errorLog: str
-    language: str = "java"
+    code: str = Field(min_length=1, max_length=1_500_000)
+    errorLog: str = Field(min_length=1, max_length=500_000)
+    language: str = Field(default="java", min_length=1, max_length=32)
 
 
 class DebugResponse(BaseModel):
@@ -95,7 +95,7 @@ async def wait_for_java_server():
                     return
         except Exception:
             pass
-        logger.warn("Java server not ready, retrying...", extra={"attempt": i + 1, "requestId": "system"})
+        logger.warning("Java server not ready, retrying...", extra={"attempt": i + 1, "requestId": "system"})
         await asyncio.sleep(2)
     logger.error("Java server failed to become ready in time", extra={"requestId": "system"})
 
@@ -246,9 +246,12 @@ def ready() -> dict:
 
 
 @app.post("/review", response_model=ReviewResponse)
-def review(request: ReviewRequest) -> ReviewResponse:
+def review(request: ReviewRequest, http_request: Request) -> ReviewResponse:
     if not is_java_code(request.code):
-        logger.warn("Rejected non-Java code submission", extra={"requestId": "none"})
+        logger.warning(
+            "Rejected non-Java code submission",
+            extra={"requestId": http_request.state.request_id},
+        )
         raise HTTPException(status_code=400, detail="Only Java code is supported for review")
     """Run the full review pipeline and return either a review or a structured error.
 
@@ -260,21 +263,21 @@ def review(request: ReviewRequest) -> ReviewResponse:
     try:
         return ReviewResponse(review=run_review_pipeline(request.code))
     except Exception as exc:
-        logger.error("Review pipeline failed", extra={"requestId": "none", "error": str(exc)})
+        logger.error("Review pipeline failed", extra={"requestId": http_request.state.request_id, "error": str(exc)})
         raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
 @app.post("/generate-tests", response_model=TestGenerationResponse)
-def generate_tests(request: TestGenerationRequest) -> TestGenerationResponse:
+def generate_tests(request: TestGenerationRequest, http_request: Request) -> TestGenerationResponse:
     try:
         return TestGenerationResponse(tests=generate_full_test_suite(request.code))
     except Exception as exc:
-        logger.error("Test generation failed", extra={"requestId": getattr(request.state, "request_id", "none"), "error": str(exc)})
+        logger.error("Test generation failed", extra={"requestId": http_request.state.request_id, "error": str(exc)})
         raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
 @app.post("/analyze-repository", response_model=RepositoryAnalysisResponse)
-def analyze_repository(request: RepositoryAnalysisRequest) -> RepositoryAnalysisResponse:
+def analyze_repository(request: RepositoryAnalysisRequest, http_request: Request) -> RepositoryAnalysisResponse:
     try:
         result = analyze_github_repository(
             repo_url=request.repoUrl,
@@ -284,12 +287,12 @@ def analyze_repository(request: RepositoryAnalysisRequest) -> RepositoryAnalysis
         )
         return RepositoryAnalysisResponse(**result)
     except Exception as exc:
-        logger.error("Repository analysis failed", extra={"requestId": getattr(request.state, "request_id", "none"), "error": str(exc)})
+        logger.error("Repository analysis failed", extra={"requestId": http_request.state.request_id, "error": str(exc)})
         raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
 @app.post("/debug", response_model=DebugResponse)
-def debug_code(request: DebugRequest) -> DebugResponse:
+def debug_code(request: DebugRequest, http_request: Request) -> DebugResponse:
     try:
         diagnosis = analyze_debug_issue(
             code=request.code,
@@ -298,5 +301,5 @@ def debug_code(request: DebugRequest) -> DebugResponse:
         )
         return DebugResponse(diagnosis=diagnosis)
     except Exception as exc:
-        logger.error("Debug analysis failed", extra={"requestId": getattr(request.state, "request_id", "none"), "error": str(exc)})
+        logger.error("Debug analysis failed", extra={"requestId": http_request.state.request_id, "error": str(exc)})
         raise HTTPException(status_code=500, detail="Internal server error") from exc
