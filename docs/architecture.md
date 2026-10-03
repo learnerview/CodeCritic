@@ -55,7 +55,7 @@ The controller layer only talks to `AnalysisService`, a thin facade:
   - Tests → `TestGenerator` (Strategy)
   - Jobs → `JobCoordinator` (Adapter over SimplyDone4J)
 
-New analysis types are added by implementing an `AnalysisStrategy` and registering it in `AnalysisStrategyFactory`; the controller and service layers never change (Open/Closed Principle).
+New analysis types are added by implementing the relevant interface — `ComplexityAnalyzer`, `BugDetector` or `TestGenerator` — as a Spring `@Component` and injecting it where needed; the wiring is ordinary constructor injection (Open/Closed Principle).
 
 ### Thread-safety & concurrency
 
@@ -74,7 +74,7 @@ Handlers are registered with the library at startup by `SimplyDoneHandlerRegistr
 
 `agent.py` provides typed HTTP wrappers (`get_complexity`, `find_bugs`, `generate_test`) that keep the Java calls mockable, plus the orchestration pipelines:
 
-- `run_review_pipeline` — deterministic analysis → full LLM test suite → synthesized review
+- `run_review_pipeline` — deterministic analysis (complexity, bug findings, JUnit scaffolds) → a single-call LLM synthesis of the review (the frontend already requests the full AI test suite separately via `/generate-tests`, so it is not regenerated here)
 - `generate_full_test_suite` — JUnit suite with real assertions using findings as context
 - `analyze_github_repository` — clone via codeload/API, per-file analysis, deterministic repo metrics, then LLM summary
 - `analyze_debug_issue` — source + error log + static findings → root-cause diagnosis
@@ -83,19 +83,18 @@ Handlers are registered with the library at startup by `SimplyDoneHandlerRegistr
 
 ## Observability
 
-- Both services emit **structured JSON logs** (Java via `logstash-logback-encoder`, Python via `python-json-logger`) with request correlation ids.
-- `GET /api/metrics` (Java) reports analysis counts, latency, SpotBugs timing, and cache hit/miss/`size`.
+- Both services emit **structured JSON logs** (Java via `logstash-logback-encoder`, Python via `python-json-logger`). The Python agent attaches a per-request id; the Java server does **not** yet propagate a correlation id across the queue lifecycle — see [known-limitations](known-limitations.md).
+- `GET /api/metrics` (Java) reports analysis counts, per-type latency, and SpotBugs timing. The SpotBugs LRU cache tracks `hits()`/`misses()`/`size()` internally, but those are not yet exposed on this endpoint.
 - `GET /metrics` (Python) reports request counts, status codes, and latency percentiles.
 
 ## Repository layout
 
 ```
 java-server/src/main/java/com/codecritic/
-  analysis/          Strategies + factory (complexity, bugs, tests)
-  config/            Security, JWT, Redis, SimplyDone4J, CORS
-  controller/        AnalysisController, AuthController, FrontendController
+  analysis/          Analyzer/detector/generator interfaces + impl/
+  config/            WebSecurityConfig, JwtProperties, RedisConfig, SimplyDone4J wiring, DefaultUserInitializer
+  controller/        AnalysisController, AuthController, ConfigController, FrontendController, HealthController
   dto/               Transport records
-  event/             Job lifecycle events
   exception/         Global error handling
   job/               JobCoordinator adapter over SimplyDone4J
   metrics/           AnalysisMetrics registry

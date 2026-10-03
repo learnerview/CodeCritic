@@ -10,9 +10,12 @@ import com.codecritic.security.JwtTokenProvider;
 import com.codecritic.service.AuthService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.Map;
@@ -61,7 +64,18 @@ public class AuthServiceImpl implements AuthService {
                 .role("ROLE_USER")
                 .createdAt(Instant.now())
                 .build();
-        userRepository.save(user);
+        try {
+            userRepository.save(user);
+        } catch (DuplicateKeyException e) {
+            // Lost the race: the pre-check above saw no user, but a concurrent request
+            // inserted the same username between the check and the insert. The unique
+            // index on `users.username` is what actually makes usernames unique; the
+            // pre-check is only a fast path. Surface it as a conflict rather than letting
+            // it escape as an unhandled persistence failure.
+            log.warn("Concurrent registration for username '{}' rejected by the unique index.",
+                    request.getUsername());
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Username already exists");
+        }
         log.info("Registered new user: {}", request.getUsername());
         String token = tokenProvider.generateToken(request.getUsername(), Map.of("role", "ROLE_USER"));
         return LoginResponse.builder()

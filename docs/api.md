@@ -4,7 +4,7 @@ These are the endpoints we expose for CodeCritic. On our live demo the Java serv
 
 ## Java server (`:8080`)
 
-All `/api/**` endpoints require a JWT except `/api/auth/*` and `/api/config`, which are public. `GET /health`, `GET /ready`, and `/error` are also public.
+All `/api/**` endpoints require a JWT except `/api/auth/*` and `/api/config`, which are public. `GET /health` and `/error` are also public. (The `/ready` endpoint with LLM-connectivity reporting belongs to the Python agent on `:8000`; the Java server exposes only `/health`.)
 
 ### Auth
 

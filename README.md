@@ -15,7 +15,7 @@ We run the Java server on Render's free tier:
 
 - **Hybrid, not black-box** — static analysis runs deterministically on real ASTs (JavaParser) and finds obvious risks with a fast pattern detector; the LLM only turns findings into a review, it never invents them.
 - **Concurrent and thread-safe** — every SpotBugs run gets a unique temp directory and results are cached by source hash behind an LRU, so memory stays bounded and we never collide under parallel reviews.
-- **Distributed-ready** — Java service and Python agent talk over HTTP; we can add an async job queue backed by Redis/SimplyDone4J whenever we need it.
+- **Distributed-ready** — Java service and Python agent talk over HTTP, and async analysis jobs run through a Redis-backed queue (SimplyDone4J). The queue is opt-in locally: set `SIMPLYDONE4J_SCHEDULER_ENABLED=true` (and a reachable `REDIS_URL`) or submissions stay `QUEUED` without a worker to pick them up.
 - **Async jobs with idempotency** — job submissions are keyed deterministically (SHA-256 of type + payload), so retries never duplicate work.
 - **Stateless JWT auth** — secrets come from the environment, tokens are stateless, and the whole thing scales horizontally.
 
@@ -66,7 +66,7 @@ We document the full design and data flow in [docs/architecture.md](docs/archite
 All Java `/api/**` endpoints require a JWT (except auth/config/health). Use the live demo URL below, or `http://localhost:8080` locally.
 
 ```bash
-# create your account (no preset users) — reuse these creds in the login below
+# create your account
 curl -X POST http://localhost:8080/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{"username":"me","password":"secret"}'
@@ -107,11 +107,10 @@ Full reference and examples: [docs/api.md](docs/api.md)
 | [docs/security.md](docs/security.md) | JWT model, threat model, secrets guidance |
 | [docs/deployment.md](docs/deployment.md) | Docker, local, and Render deploy steps |
 | [docs/known-limitations.md](docs/known-limitations.md) | Trade-offs we accept & our roadmap |
-| [docs/sample-analysis-report.md](docs/sample-analysis-report.md) | A real repository-analysis output |
 
 ## Environment variables
 
-The core ones: `GROQ_API_KEY` (required), `OPENAI_API_KEY` (fallback), `JAVA_SERVER_URL`, `AUTH_USERNAME`/`AUTH_PASSWORD`, `JWT_SECRET`, `CORS_ALLOW_ORIGINS`. See [docs/deployment.md](docs/deployment.md) and `.env.example` for the full list.
+The core ones: `GROQ_API_KEY` (primary, optional if you set OpenAI), `OPENAI_API_KEY` (fallback), `JAVA_SERVER_URL`, `AUTH_USERNAME`/`AUTH_PASSWORD`, `JWT_SECRET`, `CORS_ALLOW_ORIGINS`. See [docs/deployment.md](docs/deployment.md) and `.env.example` for the full list.
 
 ## Testing
 

@@ -12,12 +12,13 @@ The Java API is protected by **stateless JWT** (HS256 via jjwt):
 4. `JwtAuthFilter` parses and verifies the token on each request and populates the Spring security context. Invalid/expired tokens are logged (not silently swallowed) and leave the context unauthenticated, which yields a `401`.
 5. The signing secret comes from `JWT_SECRET` (min 32 bytes for HS256). A demo default exists only for local dev — always override it in production.
 
-**Public (permit-all) endpoints** are configurable via `JwtProperties.permitAllPaths` and default to:
-- `/error`, `/health`, `/ready`
+**Public (permit-all) endpoints** — the roots below are configurable via `JwtProperties.permitAllPaths` and default to:
+- `/error`, `/health`
 - `/api/auth/login`, `/api/auth/register`, `/api/config`
-- static assets (`/css/**`, `/js/**`, `/templates/**`) and dashboard pages (`/`, `/index.html`, `/review`, `/repository`, `/debug`, + `.html` variants)
 
-`AUTH_USERNAME` / `AUTH_PASSWORD` are **not** the dashboard login — they are the service-account the Python agent uses to call the Java API (`python-agent` logs in with them to get a token). On your own instance, register a dedicated user and point these at it.
+Static assets (`/css/**`, `/js/**`, `/templates/**`) and the dashboard pages (`/`, `/index.html`, `/review`, `/repository`, `/debug` and their `.html` variants) are additionally permitted in `WebSecurityConfig`, since the browser must load the UI before any token exists.
+
+`AUTH_USERNAME` / `AUTH_PASSWORD` are **not** the dashboard login — they are the service-account the Python agent uses to call the Java API (`python-agent` logs in with them to get a token). On your own instance, register a dedicated user and point these at it. Under the `prod` profile the server refuses to create this account from the `admin`/`admin` default, so a reachable deployment is never left guarding `/api/**` with a published password.
 
 ## Our threat model & important caveats
 
@@ -33,8 +34,22 @@ We keep these in mind every time we deploy:
 - Passwords hashed with BCrypt; secrets injected via env, never committed.
 - Structured JSON logging correlates requests with ids; auth failures are logged.
 - Payload-size limits and per-IP rate limiting on the Python agent prevent trivial abuse.
-- CORS is locked down to configured origins (or `*` only in dev).
+- CORS is locked down to configured origins. A wildcard origin (`CORS_ALLOW_ORIGINS=*`)
+  is permitted **only** without credentials: `*` in `allowedOriginPatterns` makes Spring
+  echo the caller's `Origin` back, so pairing it with `allowCredentials(true)` would let
+  any website make a credentialed request against `/api/**` and read the response. Setting
+  an explicit allowlist re-enables credentials; the server refuses the unsafe combination.
+- The default service account (`AUTH_USERNAME`/`AUTH_PASSWORD`) is **not** provisioned under
+  the `prod` profile when the password is unset or a well-known default such as `admin`.
+  The same guard already covers `JWT_SECRET`. Set a real secret before the first deploy, or
+  the Python agent cannot obtain a token and every `/api/**` call is rejected.
 - Stateless design scales horizontally: no server-side session store.
+- **Prompt-injection hardening on every LLM entry point** (`agent.py`): all user-supplied
+  code, logs, and repository content is wrapped in unambiguous `UNTRUSTED DATA` fences
+  with a standing instruction to treat anything inside them as data, never as commands.
+  Fenced content that echoes the closing marker is neutralized so injected text cannot
+  "break out" and impersonate the prompt (see `_fence_untrusted` and
+  `_PROMPT_INJECTION_GUARD` in `python-agent/agent.py`).
 
 ## What you should change on your own instance
 

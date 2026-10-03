@@ -12,8 +12,11 @@ envVarGroups:
     envVars:
       - key: AUTH_USERNAME
         value: admin
+      # generateValue, not a literal: a committed AUTH_PASSWORD value would be a
+      # published credential guarding every /api/** endpoint, since /api/** is
+      # authenticated() and this deployment sits on a public *.onrender.com URL.
       - key: AUTH_PASSWORD
-        value: admin
+        generateValue: true
       - key: JWT_SECRET
         generateValue: true
 
@@ -37,8 +40,8 @@ services:
         value: "prod"
       - key: PYTHON_AGENT_URL
         value: https://codecritic-python.onrender.com
-      - key: SIMPLYDONE4J_ENABLED
-        value: "true"
+      # SimplyDone4J has no root-level \"enabled\" switch; scheduler + worker maintenance
+      # are gated by SIMPLYDONE4J_SCHEDULER_ENABLED.
       # Redis enabled natively via Render managed Redis service
       - key: SIMPLYDONE4J_SCHEDULER_ENABLED
         value: "true"
@@ -61,7 +64,10 @@ services:
           name: codecritic-redis
           property: connectionString
       - key: CORS_ALLOW_ORIGINS
-        value: "*"
+        # Explicit allowlist, not '*'. The Java service serves the dashboard itself, so
+        # browser traffic is same-origin and needs no wildcard; a wildcard there would
+        # force credentials off (see WebSecurityConfig.corsConfigurationSource).
+        value: "https://codecritic-java.onrender.com,https://codecritic-python.onrender.com"
     healthCheckPath: /health
 
   - type: web
@@ -82,7 +88,7 @@ services:
       - key: GITHUB_TOKEN
         sync: false
       - key: CORS_ALLOW_ORIGINS
-        value: "*"
+        value: "https://codecritic-java.onrender.com,https://codecritic-python.onrender.com"
       - key: MAX_REQUEST_BYTES
         value: "1500000"
     healthCheckPath: /health

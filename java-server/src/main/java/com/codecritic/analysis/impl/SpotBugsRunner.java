@@ -8,10 +8,11 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
 /**
  * Runs SpotBugs against a temporary compilation of the submitted source.
@@ -50,11 +51,57 @@ import java.util.concurrent.TimeUnit;
  * <p>Compilation or SpotBugs failures are swallowed and reported as empty
  * results, keeping the analysis API resilient when the Java compiler or
  * SpotBugs executable is not installed.</p>
+ *
+ * <p>The subprocess is bounded by {@link #DEFAULT_TIMEOUT_SECONDS}: the whole
+ * run (including draining its output) is subject to that budget, and the
+ * process is forcibly destroyed and awaited before its temp directory is
+ * removed, so a hung or pathological submission cannot pin a request thread or
+ * leak a process.</p>
  */
 @Component
 public class SpotBugsRunner {
 
     private static final Logger log = LoggerFactory.getLogger(SpotBugsRunner.class);
+
+    /** Default SpotBugs CLI invocation; the classes dir is appended per run. */
+    static final String SPOTBUGS_COMMAND = "/usr/local/bin/spotbugs";
+
+    /** Wall-clock budget for the whole subprocess: start, run, drain output, exit. */
+    static final long DEFAULT_TIMEOUT_SECONDS = 60L;
+
+    /**
+     * Upper bound on how long a {@code destroyForcibly()} is given to take effect.
+     * Must be short: the temp directory holding the compiled classes cannot be
+     * deleted safely while the process may still be writing into it.
+     */
+    private static final long TERMINATION_WAIT_SECONDS = 5L;
+
+    /**
+     * Upper bound on waiting for the output-reader thread once the process has
+     * exited. Bounded on purpose: a grandchild may still hold the stdout pipe
+     * open, and this thread must never be able to stall the caller.
+     */
+    private static final long READER_JOIN_MILLIS = 1_000L;
+
+    /** Command prefix used to launch SpotBugs; the classes dir is appended to it. */
+    private final List<String> command;
+
+    /** Wall-clock budget for one SpotBugs run, in seconds. */
+    private final long timeoutSeconds;
+
+    public SpotBugsRunner() {
+        this(List.of(SPOTBUGS_COMMAND, "-textui"), DEFAULT_TIMEOUT_SECONDS);
+    }
+
+    /**
+     * Test seam: lets a fake "spotbugs" binary be substituted so process
+     * lifecycle behaviour (timeout, kill, output capture) can be exercised
+     * without a real SpotBugs install.
+     */
+    SpotBugsRunner(List<String> command, long timeoutSeconds) {
+        this.command = List.copyOf(command);
+        this.timeoutSeconds = timeoutSeconds;
+    }
 
     /**
      * Thrown when the submitted code cannot be compiled. SpotBugs needs compiled
@@ -78,6 +125,9 @@ public class SpotBugsRunner {
         String requestId = java.util.UUID.randomUUID().toString().substring(0, 8);
         Path tmpDir = Files.createTempDirectory("codecritic-" + requestId);
         log.debug("Created unique temp directory for SpotBugs analysis: {}", tmpDir);
+        // Hoisted out of the try so the finally can guarantee the subprocess is
+        // gone before the temp directory it writes into is deleted.
+        Process process = null;
         try {
             Path srcDir = Files.createDirectories(tmpDir.resolve("src"));
             // Name the temp file after the public top-level type so javac accepts
@@ -118,14 +168,15 @@ public class SpotBugsRunner {
                 }
             }
 
-            ProcessBuilder pb = new ProcessBuilder("/usr/local/bin/spotbugs", "-textui", classesDir.toString());
+            List<String> launcher = new java.util.ArrayList<>(this.command);
+            launcher.add(classesDir.toString());
+            ProcessBuilder pb = new ProcessBuilder(launcher);
             pb.redirectErrorStream(true);
             // Constrain the SpotBugs subprocess JVM so its transient heap (spawned
             // alongside this server's own JVM) does not blow past small-memory hosts
             // like the Render free tier (512 MB RAM). SpotBugs spawns its own JVM,
             // which would otherwise roughly double memory during analysis.
-            pb.environment().put("JAVA_TOOL_OPTIONS", "-Xmx128m -Xms16m");
-            Process process;
+            pb.environment().put("JAVA_TOOL_OPTIONS", "-Xmx192m -Xms32m -XX:MaxMetaspaceSize=64m");
             try {
                 log.info("Starting SpotBugs subprocess for directory: {}", classesDir);
                 process = pb.start();
@@ -134,36 +185,114 @@ public class SpotBugsRunner {
                 return List.of();
             }
 
-            List<String> results = new ArrayList<>();
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    // Skip launcher/header noise: the -textui header row, blank lines,
-                    // and the JVM's "Picked up JAVA_TOOL_OPTIONS" notice (which is printed
-                    // to stderr, merged here — it is NOT a SpotBugs finding).
-                    if (line.isBlank()
-                            || line.startsWith("category")
-                            || line.startsWith("Picked up JAVA_TOOL_OPTIONS")) {
-                        continue;
-                    }
-                    results.add(line);
-                }
-            }
-            if (!process.waitFor(60, TimeUnit.SECONDS)) {
-                log.warn("SpotBugs process timed out after 60s; destroying process.");
-                process.destroyForcibly();
-            }
-            log.info("SpotBugs finished, found {} findings", results.size());
+            List<String> results = collectFindings(process);
+            log.info("SpotBugs output collected, found {} findings", results.size());
             return results;
         } finally {
+            // Must run before deleteDirectory: the subprocess writes .class/.aux
+            // files into tmpDir, so deleting first could race a live process and
+            // leave the tree behind (or hit a sharing violation on Windows).
+            terminate(process);
+            // Releasing the pipes unblocks the reader thread if it is still
+            // parked in readLine() on a pipe some grandchild kept open.
+            closeStreams(process);
             deleteDirectory(tmpDir);
         }
     }
 
-    private void deleteDirectory(Path path) {
+    /**
+     * Drains the subprocess output while bounding the whole run with the
+     * timeout. Output is read on a separate thread because {@code readLine()}
+     * blocks until EOF: if the process hangs without closing stdout, reading on
+     * this thread would block forever and the timeout would never be reached.
+     * Only the process itself is awaited here, so the timeout always fires.
+     *
+     * @return the findings read so far (possibly partial if the run timed out)
+     */
+    private List<String> collectFindings(Process process) throws InterruptedException {
+        // Copy-on-write: the reader thread appends while this thread snapshots,
+        // so the list must tolerate concurrent writes and safe iteration.
+        List<String> results = new CopyOnWriteArrayList<>();
+        Thread reader = new Thread(() -> readOutput(process, results), "spotbugs-output-reader");
+        reader.setDaemon(true);
+        reader.start();
+
+        if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
+            log.warn("SpotBugs process did not exit within {}s; destroying process.", timeoutSeconds);
+            // Kill first, join second: joining a reader that is still blocked on
+            // a live process's stdout would reintroduce the unbounded wait.
+            terminate(process);
+        }
+        reader.join(READER_JOIN_MILLIS);
+        return List.copyOf(results);
+    }
+
+    /** Reader thread body; never propagates, a broken pipe is an expected outcome. */
+    private void readOutput(Process process, List<String> results) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                // Skip launcher/header noise: the -textui header row, blank lines,
+                // and the JVM's "Picked up JAVA_TOOL_OPTIONS" notice (which is printed
+                // to stderr, merged here — it is NOT a SpotBugs finding).
+                if (line.isBlank()
+                        || line.startsWith("category")
+                        || line.startsWith("Picked up JAVA_TOOL_OPTIONS")) {
+                    continue;
+                }
+                results.add(line);
+            }
+        } catch (Exception ex) {
+            log.debug("SpotBugs output ended early: {}", ex.toString());
+        }
+    }
+
+    /**
+     * Ensures the subprocess is dead. Idempotent, and a no-op for {@code null}
+     * (the process never started) or for an already-exited process.
+     */
+    private void terminate(Process process) {
+        if (process == null) {
+            return;
+        }
         try {
-            Files.walk(path)
-                    .sorted(Comparator.reverseOrder())
+            if (process.isAlive()) {
+                log.warn("Forcefully destroying SpotBugs process {}.", process.pid());
+                process.destroyForcibly();
+                // destroyForcibly() only signals; wait so the delete below cannot
+                // race a still-running process writing into the temp directory.
+                if (!process.waitFor(TERMINATION_WAIT_SECONDS, TimeUnit.SECONDS)) {
+                    log.warn("SpotBugs process {} survived destroyForcibly; temp directory may not be fully removed.",
+                            process.pid());
+                }
+            }
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /** Releases the subprocess pipes so no reader thread stays parked on them. */
+    private void closeStreams(Process process) {
+        if (process == null) {
+            return;
+        }
+        closeQuietly(process.getInputStream());
+        closeQuietly(process.getOutputStream());
+        closeQuietly(process.getErrorStream());
+    }
+
+    private void closeQuietly(java.io.Closeable stream) {
+        try {
+            stream.close();
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void deleteDirectory(Path path) {
+        // Files.walk opens a directory handle that must be released before the
+        // entries it yields can be deleted, hence try-with-resources.
+        try (Stream<Path> tree = Files.walk(path)) {
+            tree.sorted(Comparator.reverseOrder())
                     .map(Path::toFile)
                     .forEach(java.io.File::delete);
         } catch (Exception ignored) {

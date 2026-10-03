@@ -9,6 +9,19 @@ jobs:
   java:
     name: Java server (build + tests)
     runs-on: ubuntu-latest
+    # SecurityIntegrationTest is a true integration test: it registers a user through the
+    # real filter chain and deletes it again via UserRepository, so it needs a live Mongo.
+    # Without this service it fails with "Connection refused" and takes the whole build down.
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.runCommand({ping:1})'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -19,6 +32,8 @@ jobs:
       - name: Build and test
         working-directory: java-server
         run: mvn -B test
+        env:
+          SPRING_DATA_MONGODB_URI: mongodb://localhost:27017/codecritic
 
   python:
     name: Python agent (compile + smoke)

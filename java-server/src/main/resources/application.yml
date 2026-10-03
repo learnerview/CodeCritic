@@ -21,6 +21,10 @@ spring:
   data:
     mongodb:
       uri: ${SPRING_DATA_MONGODB_URI:mongodb://localhost:27017/codecritic}
+      # auto-index-creation is deliberately OFF. Enabling it makes MongoTemplate hit the
+      # database from its own constructor, so a Mongo that is slow or absent at boot
+      # stops the application from starting at all. The unique index on username is
+      # created by DefaultUserInitializer instead, which tolerates Mongo being down.
   redis:
     # Single source of truth for the job queue's Redis connection.
     # Set REDIS_URL (e.g. rediss://<user>:<pass>@<host>:6379) in the environment;
@@ -33,8 +37,10 @@ spring:
 
 # Redis is configured in code (RedisConfig) from REDIS_URL; fallback is
 # redis://localhost:6379 for local development.
+# SimplyDone4J has no root-level \"enabled\" switch — the engine runs whenever the
+# starter is on the classpath and a Redis connection is configured. The real gates are
+# per-section: scheduler.enabled (scheduler + worker maintenance) and monitoring.enabled.
 simplydone4j:
-  enabled: ${SIMPLYDONE4J_ENABLED:true}
   key-prefix: codecritic
   ttl-days: 7
   idempotency-ttl-hours: 2

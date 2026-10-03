@@ -48,6 +48,8 @@ public class CachedSpotBugsBugDetector implements BugDetector {
         });
     }
 
+    private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.CompletableFuture<List<BugFinding>>> inFlight = new java.util.concurrent.ConcurrentHashMap<>();
+
     @Override
     public List<BugFinding> detect(String code) {
         String key = cacheKey(code);
@@ -59,13 +61,33 @@ public class CachedSpotBugsBugDetector implements BugDetector {
             }
         }
         misses.incrementAndGet();
-        long started = System.nanoTime();
-        List<BugFinding> findings = delegate.detect(code);
-        metrics.recordSpotBugsRun((System.nanoTime() - started) / 1_000_000);
-        synchronized (cache) {
-            cache.put(key, findings);
+        
+        java.util.concurrent.CompletableFuture<List<BugFinding>> future = new java.util.concurrent.CompletableFuture<>();
+        java.util.concurrent.CompletableFuture<List<BugFinding>> existing = inFlight.putIfAbsent(key, future);
+        
+        if (existing != null) {
+            try {
+                return existing.get();
+            } catch (Exception e) {
+                throw new RuntimeException("Concurrent SpotBugs execution failed", e);
+            }
         }
-        return findings;
+
+        try {
+            long started = System.nanoTime();
+            List<BugFinding> findings = delegate.detect(code);
+            metrics.recordSpotBugsRun((System.nanoTime() - started) / 1_000_000);
+            synchronized (cache) {
+                cache.put(key, findings);
+            }
+            future.complete(findings);
+            return findings;
+        } catch (Exception e) {
+            future.completeExceptionally(e);
+            throw e;
+        } finally {
+            inFlight.remove(key);
+        }
     }
 
     /** Number of cached results replayed. */

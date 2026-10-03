@@ -2,6 +2,10 @@ FROM maven:3.9.9-eclipse-temurin-21 AS build
 WORKDIR /build
 ENV MAVEN_OPTS="-Xmx512m"
 COPY java-server/pom.xml .
+# simplydone4j-spring-boot-starter 2.1.0 is built locally and is not on Maven Central
+# yet, so its jar/pom are seeded into the image's repository before the build. Remove
+# this line and vendor/ once 2.1.0 is published.
+COPY vendor/io/github/learnerview /root/.m2/repository/io/github/learnerview
 COPY java-server/src ./src
 RUN mvn -q -DskipTests package
 

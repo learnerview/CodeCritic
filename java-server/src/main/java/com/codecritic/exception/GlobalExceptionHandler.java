@@ -10,6 +10,7 @@ import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -56,6 +57,28 @@ public class GlobalExceptionHandler {
         log.info("Resource not found: {}", ex.getMessage());
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
                 ApiErrorResponse.of("NOT_FOUND", ex.getMessage(), null)
+        );
+    }
+
+    /**
+     * Unmapped static-resource paths arrive as {@link NoResourceFoundException} and were
+     * being swallowed by the catch-all {@code Exception} handler below, so any request to
+     * a path with no handler -- {@code /ready}, a typo'd endpoint, a stale bookmark --
+     * returned <em>500 Internal Server Error</em> and logged a full stack trace. Callers
+     * reasonably escalated monitoring on it, and a probe expecting 404 got 500 instead.
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiErrorResponse> handleNoResourceFound(NoResourceFoundException ex) {
+        // Spring reports the resource path without its leading slash ("ready", not
+        // "/ready"), so normalise it before echoing it back to the caller.
+        String path = ex.getResourcePath();
+        if (path != null && !path.isEmpty() && !path.startsWith("/")) {
+            path = "/" + path;
+        }
+        log.info("No handler for {} {}", ex.getHttpMethod(), path);
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+                ApiErrorResponse.of("NOT_FOUND",
+                        "No endpoint " + ex.getHttpMethod() + " " + path, null)
         );
     }
 

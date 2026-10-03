@@ -90,7 +90,7 @@ public class AnalysisController {
     }
 
     @PostMapping("/jobs/complexity")
-    public ResponseEntity<Map<String, String>> submitComplexityJob(@RequestBody ComplexityRequest req) {
+    public ResponseEntity<?> submitComplexityJob(@RequestBody ComplexityRequest req) {
         if (req == null || req.code() == null || req.code().isBlank()) {
             return ResponseEntity.badRequest().build();
         }
@@ -101,12 +101,12 @@ public class AnalysisController {
             return ResponseEntity.accepted().body(Map.of("jobId", job.getJobId(), "status", job.getStatus()));
         } catch (Exception e) {
             log.error("Failed to submit complexity job", e);
-            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+            return internalServerError();
         }
     }
 
     @PostMapping("/jobs/bugs")
-    public ResponseEntity<Map<String, String>> submitBugsJob(@RequestBody BugRequest req) {
+    public ResponseEntity<?> submitBugsJob(@RequestBody BugRequest req) {
         if (req == null || req.code() == null || req.code().isBlank()) {
             return ResponseEntity.badRequest().build();
         }
@@ -117,34 +117,47 @@ public class AnalysisController {
             return ResponseEntity.accepted().body(Map.of("jobId", job.getJobId(), "status", job.getStatus()));
         } catch (Exception e) {
             log.error("Failed to submit bug detection job", e);
-            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+            return internalServerError();
         }
     }
 
+    /**
+     * Returns the current state of a job, whatever that state is: queued, running, succeeded,
+     * failed or dead-lettered. A 404 is reserved for a jobId that does not exist, so a client
+     * polling this endpoint can tell "still working" from "finished, and it failed" — without
+     * that distinction a failed job is indistinguishable from a queued one and the caller just
+     * spins until it gives up.
+     */
     @GetMapping("/jobs/{jobId}")
     public ResponseEntity<?> getJobResult(@PathVariable String jobId) {
+        Object response;
         try {
-            Object response = analysisService.getJobResult(jobId);
-            if (response == null) {
-                return ResponseEntity.notFound().build();
-            }
-            if (response instanceof JobResponse job) {
-                // Only the job's owner may read its payload/result (avoids IDOR).
-                String expectedProducer = getProducer() + "-" + job.getJobType();
-                if (!expectedProducer.equals(job.getProducer())) {
-                    log.warn("User {} attempted to access job {} owned by {}", getProducer(), jobId, job.getProducer());
-                    return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
-                }
-            }
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
+            response = analysisService.getJobResult(jobId);
+        } catch (RuntimeException e) {
+            // Not an unknown job — the coordinator only reports those as an absent result.
+            // Swallowing this would turn a backend outage into a 404 and a silent client hang,
+            // so it propagates and GlobalExceptionHandler renders a sanitised 5xx.
             log.error("Failed to retrieve job {}", jobId, e);
-            return ResponseEntity.internalServerError().build();
+            throw e;
         }
+        if (response == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+                    ApiErrorResponse.of("NOT_FOUND", "No such job: " + jobId, null));
+        }
+        if (response instanceof JobResponse job) {
+            // Only the job's owner may read its payload/result (avoids IDOR).
+            String expectedProducer = getProducer() + "-" + job.getJobType();
+            if (!expectedProducer.equals(job.getProducer())) {
+                log.warn("User {} attempted to access job {} owned by {}", getProducer(), jobId, job.getProducer());
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(
+                        ApiErrorResponse.of("FORBIDDEN", "You do not own this job", null));
+            }
+        }
+        return ResponseEntity.ok(response);
     }
 
     @PostMapping("/jobs/generate-test")
-    public ResponseEntity<Map<String, String>> submitTestGenerationJob(@RequestBody TestGenerationRequest req) {
+    public ResponseEntity<?> submitTestGenerationJob(@RequestBody TestGenerationRequest req) {
         if (req == null) {
             return ResponseEntity.badRequest().build();
         }
@@ -160,8 +173,18 @@ public class AnalysisController {
             return ResponseEntity.accepted().body(Map.of("jobId", job.getJobId(), "status", job.getStatus()));
         } catch (Exception e) {
             log.error("Failed to submit test generation job", e);
-            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+            return internalServerError();
         }
+    }
+
+    /**
+     * The exception's own message can carry connection strings, hostnames and driver
+     * internals, so the caller gets the same sanitised body GlobalExceptionHandler emits and
+     * the real cause stays in the log where the operator wrote it.
+     */
+    private ResponseEntity<ApiErrorResponse> internalServerError() {
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(ApiErrorResponse.of("INTERNAL_ERROR", "An unexpected error occurred", null));
     }
 
     private String getProducer() {

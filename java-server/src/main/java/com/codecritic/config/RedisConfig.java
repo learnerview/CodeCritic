@@ -1,7 +1,6 @@
 package com.codecritic.config;
 
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.data.redis.LettuceClientConfigurationBuilderCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
@@ -25,19 +24,11 @@ import java.time.Duration;
 @Configuration
 public class RedisConfig {
 
-    /**
-     * Increase the Lettuce command timeout slightly to tolerate brief Redis hiccups.
-     * This is a short-term mitigation; long-term fixes should address Redis stability.
-     */
-    @Bean
-    public LettuceClientConfigurationBuilderCustomizer lettuceCustomizer() {
-        return builder -> builder.commandTimeout(Duration.ofSeconds(5));
-    }
-
     @Value("${spring.redis.url:}")
-    private String redisUrlProperty;
+private String redisUrlProperty;
 
     @Bean
+
     @Primary
     public RedisConnectionFactory redisConnectionFactory() {
         // Prefer the Spring property (which can be bound to the REDIS_URL env in application.yml),
@@ -69,6 +60,11 @@ public class RedisConfig {
             }
         }
 
+        // This is the only place the command timeout is configured, and it is the only place
+        // it can be: the factory below is built by hand, so Spring Boot's Lettuce auto-config
+        // backs off (@ConditionalOnMissingBean(RedisConnectionFactory)) and never applies a
+        // LettuceClientConfigurationBuilderCustomizer. An earlier 5s customizer bean here was
+        // therefore dead, while the real timeout stayed at 2s.
         LettuceClientConfiguration.LettuceClientConfigurationBuilder clientConfigBuilder =
                 LettuceClientConfiguration.builder()
                         .commandTimeout(Duration.ofSeconds(2));

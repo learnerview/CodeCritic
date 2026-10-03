@@ -27,7 +27,7 @@ Line-scanning heuristics:
 - **Unsafe `.toString()`**: a line with `.toString()` that has no `!= null` guard on it → `NullPointerRisk`.
 
 ### SpotBugs (`SpotBugsBugDetector` + `SpotBugsRunner`)
-SpotBugs compiles the submitted source in a unique `UUID` temp directory and runs `spotbugs -textui` over the compiled classes. Each finding line is parsed into a `BugFinding` with the SpotBugs bug type (e.g. `NP_NULL_ON_SOME_PATH`, `IL_INFINITE_LOOP`) extracted from the output. Findings are wrapped as `SpotBugsFinding`. Blocking is never done — failures or absence of the tool return no findings and never fail the request.
+SpotBugs compiles the submitted source in a unique temp directory (named `codecritic-<requestId>`) and runs `spotbugs -textui` over the compiled classes. Each finding line is parsed into a `BugFinding` with the SpotBugs bug type (e.g. `NP_NULL_ON_SOME_PATH`, `IL_INFINITE_LOOP`) extracted from the output; `SpotBugsFinding` is the placeholder type used only when a finding carries no parseable type, or when the tool is unavailable. The request is never blocked on: if the tool is missing or errors the detector returns no findings rather than failing the call, **except** that source which does not compile yields a single `COMPILATION_ERROR` finding.
 
 ### Caching (`CachedSpotBugsBugDetector`)
 SpotBugs is expensive (compile + subprocess), so results are cached:
@@ -64,7 +64,7 @@ class <Class>Test {
 | `String` | `"sample"` |
 | other | `null` |
 
-For non-void return types it emits `assertNotNull(result)` (and a `Boolean`-specific assertion when applicable); void methods use `assertDoesNotThrow`.
+For non-void return types it emits `assertNotNull(result)`, except for `boolean`/`Boolean` returns where it emits an `assertTrue(result == Boolean.TRUE || result == Boolean.FALSE)` check; void methods use `assertDoesNotThrow`.
 
 ### LLM full suite (`/generate-tests`)
 `generate_full_test_suite` reuses the deterministic findings and asks the LLM for a complete JUnit 5 class with meaningful assertions and happy-path/edge/error coverage, rejecting output that has no `class` or `@Test`.

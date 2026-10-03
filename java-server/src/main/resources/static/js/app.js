@@ -451,7 +451,7 @@ function initReviewPage() {
     const statusText = byId('statusText');
     const analyzeBtn = byId('analyzeBtn');
 
-    const setStatus = (text) => { if (statusText) statusText.textContent = text; };
+    const setStatus = (text) => { if (statusText) statusText.innerHTML = text; };
     const setError = () => {
         if (statusText) { statusText.textContent = 'Analysis failed'; statusText.classList.add('error'); }
         if (output) output.classList.add('error');
@@ -807,7 +807,9 @@ function renderStructured(kind, data) {
     }
     if (kind === 'ai') {
         const text = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
-        return `<div class="ai-review"><span class="ai-badge">AI</span>${esc(text)}</div>`;
+        const sections = text.split(/--- AI REVIEW(?: UNAVAILABLE)? ---/);
+        const review = sections.length > 1 ? sections[sections.length - 1].trim() : text.trim();
+        return `<div class="ai-review"><span class="ai-badge">AI</span>${esc(review || '(no review)')}</div>`;
     }
     return `<pre class="fallback">${esc(toText(data))}</pre>`;
 }
