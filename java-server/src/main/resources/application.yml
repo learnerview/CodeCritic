@@ -9,9 +9,15 @@ server:
 codecritic:
   auth:
     username: ${AUTH_USERNAME:admin}
-    password: ${AUTH_PASSWORD:admin}
+    # No default password on purpose: a blank AUTH_PASSWORD is refused at startup unless an
+    # explicit development profile (dev/test) is active. The local-dev default lives only in
+    # application-dev.yml so it can never be provisioned by a deployment that just forgot to
+    # set a profile. See DefaultUserInitializer.
+    password: ${AUTH_PASSWORD:}
   jwt:
-    secret: ${JWT_SECRET:codecritic-demo-secret-key-change-me-in-production-0123456789}
+    # No default secret on purpose, for the same reason. Set JWT_SECRET for any deployment;
+    # the dev profile supplies the demo secret locally (see application-dev.yml, JwtTokenProvider).
+    secret: ${JWT_SECRET:}
     expiration-ms: ${JWT_EXPIRATION_MS:86400000}
     issuer: codecritic
   cors:

@@ -23,18 +23,20 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * The default service account must never be provisioned with a published password
- * under the {@code prod} profile. {@code /api/**} is {@code authenticated()} and the
- * deployment is publicly reachable, so an {@code admin}/{@code admin} account that the
- * initializer creates on its own is a full-privilege credential that anyone can guess.
+ * Provisioning of the default service account once startup has already accepted the
+ * configured password. The decision to start at all with a given password lives in
+ * {@code DeploymentSecurityStartupTest}: a well-known password outside a dev/test profile
+ * must stop the context from coming up rather than merely skipping provisioning.
  *
- * <p>The bootstrap is also check-then-act, so when several replicas start at once against
+ * <p>The bootstrap is check-then-act, so when several replicas start at once against
  * the same Mongo they all observe "not present". The unique index on {@code users.username}
  * picks a winner and the losers must treat that as success, not as a fault.
  */
 class DefaultUserInitializerTest {
 
-private final UserRepository userRepository = mock(UserRepository.class);
+    private static final String STRONG_PASSWORD = "Zt7#kQ2$vLm9xWp4Rb";
+
+    private final UserRepository userRepository = mock(UserRepository.class);
     private final PasswordEncoder encoder = new BCryptPasswordEncoder();
     private final MongoTemplate mongoTemplate = mock(MongoTemplate.class);
 
@@ -43,53 +45,25 @@ private final UserRepository userRepository = mock(UserRepository.class);
         if (profile != null) {
             env.setActiveProfiles(profile);
         }
-        DefaultUserInitializer init = new DefaultUserInitializer(userRepository, encoder, env, mongoTemplate);
-        org.springframework.test.util.ReflectionTestUtils.setField(init, "defaultUsername", "admin");
-        org.springframework.test.util.ReflectionTestUtils.setField(init, "defaultPassword", password);
-        return init;
-    }
-
-    @Test
-    void shouldRefuseToCreateUserInProductionWithDefaultPassword() {
-        when(userRepository.findByUsername("admin")).thenReturn(java.util.Optional.empty());
-
-        initializerFor("prod", "admin").ensureDefaultUser();
-
-        verify(userRepository, never()).save(any(User.class));
-    }
-
-    @Test
-    void shouldRefuseToCreateUserInProductionWithBlankPassword() {
-        initializerFor("prod", "  ").ensureDefaultUser();
-
-        verify(userRepository, never()).save(any(User.class));
-    }
-
-    @Test
-    void shouldRefuseToCreateUserInProductionWithOtherWellKnownDefaults() {
-        for (String weak : new String[]{"password", "changeme", "secret", "123456", "ADMIN"}) {
-            initializerFor("prod", weak).ensureDefaultUser();
-        }
-
-        verify(userRepository, never()).save(any(User.class));
+        return new DefaultUserInitializer(userRepository, encoder, env, mongoTemplate, "admin", password);
     }
 
     @Test
     void shouldCreateUserInProductionWithStrongConfiguredPassword() {
         when(userRepository.findByUsername("admin")).thenReturn(java.util.Optional.empty());
 
-        initializerFor("prod", "Zt7#kQ2$vLm9xWp4Rb").ensureDefaultUser();
+        initializerFor("prod", STRONG_PASSWORD).ensureDefaultUser();
 
         verify(userRepository).save(any(User.class));
     }
 
     @Test
-    void shouldStillAllowLocalDevDefaultOutsideProduction() {
+    void shouldStillAllowLocalDevDefaultUnderTheDevProfile() {
         when(userRepository.findByUsername("admin")).thenReturn(java.util.Optional.empty());
 
-        initializerFor(null, "admin").ensureDefaultUser();
+        initializerFor("dev", "admin").ensureDefaultUser();
 
-        // Local dev keeps working with zero configuration.
+        // Local dev keeps working with zero configuration once it opts into the dev profile.
         verify(userRepository).save(any(User.class));
     }
 
@@ -99,7 +73,7 @@ private final UserRepository userRepository = mock(UserRepository.class);
         assertTrue(DefaultUserInitializer.isInsecure(""));
         assertTrue(DefaultUserInitializer.isInsecure("admin"));
         assertTrue(DefaultUserInitializer.isInsecure(" ChangeMe "));
-        assertFalse(DefaultUserInitializer.isInsecure("Zt7#kQ2$vLm9xWp4Rb"));
+        assertFalse(DefaultUserInitializer.isInsecure(STRONG_PASSWORD));
     }
 
     @Test
@@ -107,7 +81,7 @@ private final UserRepository userRepository = mock(UserRepository.class);
         when(userRepository.findByUsername("admin")).thenReturn(java.util.Optional.of(
                 User.builder().username("admin").password("x").role("ROLE_USER").build()));
 
-        initializerFor("prod", "Zt7#kQ2$vLm9xWp4Rb").ensureDefaultUser();
+        initializerFor("prod", STRONG_PASSWORD).ensureDefaultUser();
 
         verify(userRepository, never()).save(any(User.class));
     }
@@ -116,9 +90,9 @@ private final UserRepository userRepository = mock(UserRepository.class);
     void shouldEncodePasswordRatherThanStorePlaintext() {
         when(userRepository.findByUsername("admin")).thenReturn(java.util.Optional.empty());
 
-        initializerFor(null, "admin").ensureDefaultUser();
+        initializerFor("dev", "admin").ensureDefaultUser();
 
-        org.mockito.ArgumentCaptor<User> captor = org.mockito.ArgumentCaptor.forClass(User.class);
+        ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
         verify(userRepository).save(captor.capture());
         assertFalse("admin".equals(captor.getValue().getPassword()),
                 "the password must be hashed, never stored in the clear");
@@ -137,7 +111,7 @@ private final UserRepository userRepository = mock(UserRepository.class);
                 "E11000 duplicate key error collection: codecritic.users index: username_1 dup key: "
                         + "{ username: \"admin\" }"));
 
-        assertDoesNotThrow(() -> initializerFor(null, "admin").ensureDefaultUser());
+        assertDoesNotThrow(() -> initializerFor("dev", "admin").ensureDefaultUser());
     }
 
     @Test
@@ -145,7 +119,7 @@ private final UserRepository userRepository = mock(UserRepository.class);
         when(userRepository.findByUsername("admin")).thenReturn(java.util.Optional.empty());
         when(userRepository.save(any(User.class))).thenThrow(new DuplicateKeyException("E11000"));
 
-        assertDoesNotThrow(() -> initializerFor("prod", "Zt7#kQ2$vLm9xWp4Rb").ensureDefaultUser());
+        assertDoesNotThrow(() -> initializerFor("prod", STRONG_PASSWORD).ensureDefaultUser());
     }
 
     /**
@@ -157,16 +131,16 @@ private final UserRepository userRepository = mock(UserRepository.class);
         when(userRepository.findByUsername("admin"))
                 .thenThrow(new DataAccessResourceFailureException("connection refused"));
 
-        assertDoesNotThrow(() -> initializerFor(null, "admin").ensureDefaultUser());
+        assertDoesNotThrow(() -> initializerFor("dev", "admin").ensureDefaultUser());
     }
 
-@Test
+    @Test
     void shouldSurviveAMongoOutageWhenInserting() {
         when(userRepository.findByUsername("admin")).thenReturn(java.util.Optional.empty());
         when(userRepository.save(any(User.class)))
                 .thenThrow(new DataAccessResourceFailureException("connection refused"));
 
-        assertDoesNotThrow(() -> initializerFor(null, "admin").ensureDefaultUser());
+        assertDoesNotThrow(() -> initializerFor("dev", "admin").ensureDefaultUser());
     }
 
     // --- unique index bootstrap -------------------------------------------------
@@ -182,7 +156,7 @@ private final UserRepository userRepository = mock(UserRepository.class);
                 mock(org.springframework.data.mongodb.core.index.IndexOperations.class);
         when(mongoTemplate.indexOps(User.class)).thenReturn(ops);
 
-        initializerFor(null, "admin").ensureUniqueUsernameIndex();
+        initializerFor("dev", "admin").ensureUniqueUsernameIndex();
 
         ArgumentCaptor<Index> captor = ArgumentCaptor.forClass(Index.class);
         verify(ops).ensureIndex(captor.capture());
@@ -198,7 +172,7 @@ private final UserRepository userRepository = mock(UserRepository.class);
         when(mongoTemplate.indexOps(User.class))
                 .thenThrow(new DataAccessResourceFailureException("connection refused"));
 
-        assertDoesNotThrow(() -> initializerFor(null, "admin").ensureUniqueUsernameIndex(),
+        assertDoesNotThrow(() -> initializerFor("dev", "admin").ensureUniqueUsernameIndex(),
                 "an unreachable Mongo must not stop the application from starting");
     }
 
@@ -210,12 +184,12 @@ private final UserRepository userRepository = mock(UserRepository.class);
         org.mockito.Mockito.doThrow(new DuplicateKeyException("E11000 duplicate key"))
                 .when(ops).ensureIndex(any(Index.class));
 
-        assertDoesNotThrow(() -> initializerFor(null, "admin").ensureUniqueUsernameIndex());
+        assertDoesNotThrow(() -> initializerFor("dev", "admin").ensureUniqueUsernameIndex());
     }
 
     @Test
     void shouldTolerateAMissingMongoTemplate() {
         assertDoesNotThrow(() -> new DefaultUserInitializer(userRepository, encoder,
-                new MockEnvironment(), null).ensureUniqueUsernameIndex());
+                new MockEnvironment(), null, "admin", STRONG_PASSWORD).ensureUniqueUsernameIndex());
     }
 }

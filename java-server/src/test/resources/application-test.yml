@@ -1,0 +1,9 @@
+# Activated by @ActiveProfiles("test") on the Spring integration tests. It supplies real
+# (non-default) secrets so the deployment guards have something to accept, and it marks the
+# run as a development profile so the test-only service account is permitted.
+codecritic:
+  auth:
+    username: admin
+    password: test-only-service-password
+  jwt:
+    secret: test-only-signing-secret-that-is-at-least-32-bytes

@@ -1,0 +1,11 @@
+# Explicit local-development profile. The published defaults below are the only place the
+# committed demo credentials exist; any other profile, or no profile at all, refuses to start
+# with them (see DeploymentProfile). A deployment therefore has to deliberately opt in with
+# SPRING_PROFILES_ACTIVE=dev to get a known admin/admin service account and demo signing
+# secret — and an operator who forgets to set a profile gets a startup failure, not a
+# publicly reachable account guarded by a password anyone can read in the repo.
+codecritic:
+  auth:
+    password: ${AUTH_PASSWORD:admin}
+  jwt:
+    secret: ${JWT_SECRET:codecritic-demo-secret-key-change-me-in-production-0123456789}

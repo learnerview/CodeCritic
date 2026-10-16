@@ -53,6 +53,11 @@ TEST_MAX_TOKENS = int(os.getenv("TEST_MAX_TOKENS", "4096"))
 # Cap for the synthesized natural-language review / debug output.
 REVIEW_MAX_TOKENS = int(os.getenv("REVIEW_MAX_TOKENS", "2048"))
 
+# Hard cap on how many repository files are ever analyzed per request. The HTTP layer
+# (app.py) advertises this same bound so callers can see the effective limit instead of
+# submitting a larger maxFiles value that is silently truncated.
+MAX_REPO_FILES = int(os.getenv("MAX_REPO_FILES", "30"))
+
 # Cached JWT for Java server calls; refreshed lazily on expiry or 401.
 # A lock serializes login/refresh so concurrent requests don't perform
 # redundant logins or race while one thread is mid-refresh.
@@ -109,16 +114,19 @@ def _java_request(method: str, path: str, *, payload: dict, timeout: int = 45) -
         timeout=timeout,
     )
     if resp.status_code == 401:
+        global _java_token, _java_token_expires_at
         with _java_token_lock:
             _java_token = None
             _java_token_expires_at = 0.0
-            resp = requests.request(
-                method,
-                f"{JAVA_SERVER}{path}",
-                json=payload,
-                headers={"Authorization": f"Bearer {_java_auth_token()}"},
-                timeout=timeout,
-            )
+        # Lock released before re-authenticating: _java_auth_token() acquires the same
+        # lock, so holding it here would deadlock (threading.Lock is not reentrant).
+        resp = requests.request(
+            method,
+            f"{JAVA_SERVER}{path}",
+            json=payload,
+            headers={"Authorization": f"Bearer {_java_auth_token()}"},
+            timeout=timeout,
+        )
     return resp
 
 
@@ -438,26 +446,36 @@ def build_repository_context(
     owner, repo = _parse_github_repo(repo_url)
     token = github_token or os.getenv("GITHUB_TOKEN")
     use_branch = branch or _resolve_default_branch(owner, repo, token)
-    root = _download_github_archive(owner, repo, use_branch, token)
-    files = _collect_code_files(root, max(1, min(max_files, 30)))
-    if not files:
-        raise RuntimeError("No supported source files found in repository")
+    applied = max(1, min(max_files, MAX_REPO_FILES))
+    # TemporaryDirectory guarantees the extracted archive is removed even when analysis
+    # raises part-way through; only file contents (never temp paths) leave this function.
+    with tempfile.TemporaryDirectory(prefix="codecritic-repo-") as temp_root:
+        root = _download_github_archive(owner, repo, use_branch, token, Path(temp_root))
+        files, discovered = _collect_code_files(root, applied)
+        if not files:
+            raise RuntimeError("No supported source files found in repository")
 
-    documents: List[dict[str, Any]] = []
-    for file_path in files:
-        rel = str(file_path.relative_to(root)).replace("\\", "/")
-        text = file_path.read_text(encoding="utf-8", errors="ignore")
-        documents.append(
-            {
-                "path": rel,
-                "language": file_path.suffix.lower(),
-                "size": len(text),
-                "content": text,
-            }
-        )
+        documents: List[dict[str, Any]] = []
+        for file_path in files:
+            rel = str(file_path.relative_to(root)).replace("\\", "/")
+            text = file_path.read_text(encoding="utf-8", errors="ignore")
+            documents.append(
+                {
+                    "path": rel,
+                    "language": file_path.suffix.lower(),
+                    "size": len(text),
+                    "content": text,
+                }
+            )
     return {
         "repository": {"url": repo_url, "owner": owner, "name": repo, "branch": use_branch},
         "documents": documents,
+        "meta": {
+            "maxFilesRequested": max_files,
+            "maxFilesApplied": applied,
+            "filesDiscovered": discovered,
+            "filesAnalyzed": len(documents),
+        },
     }
 
 
@@ -485,14 +503,18 @@ def _resolve_default_branch(owner: str, repo: str, token: Optional[str]) -> str:
         return "main"
 
 
-def _download_github_archive(owner: str, repo: str, branch: str, token: Optional[str]) -> Path:
-    temp_dir = Path(tempfile.mkdtemp(prefix="codecritic-repo-"))
-    zip_path = temp_dir / "repo.zip"
+def _download_github_archive(owner: str, repo: str, branch: str, token: Optional[str], dest_dir: Path) -> Path:
+    """Download and extract a repo archive into ``dest_dir`` (owned by the caller).
+
+    The caller is responsible for the lifetime of ``dest_dir``; this helper never
+    creates or removes it so that the owner can use ``TemporaryDirectory`` cleanup.
+    """
+    zip_path = dest_dir / "repo.zip"
     zip_path.write_bytes(_download_zip_content(owner, repo, branch, token))
     with zipfile.ZipFile(zip_path, "r") as zf:
-        zf.extractall(temp_dir)
+        zf.extractall(dest_dir)
 
-    extracted_dirs = [path for path in temp_dir.iterdir() if path.is_dir()]
+    extracted_dirs = [path for path in dest_dir.iterdir() if path.is_dir()]
     if not extracted_dirs:
         raise RuntimeError("Repository archive extraction failed")
     return extracted_dirs[0]
@@ -522,7 +544,8 @@ def _download_zip_content(owner: str, repo: str, branch: str, token: Optional[st
     return response.content
 
 
-def _collect_code_files(root: Path, max_files: int) -> List[Path]:
+def _collect_code_files(root: Path, max_files: int) -> tuple[List[Path], int]:
+    """Return the analyzed subset plus the total number of supported files discovered."""
     allowed = {".java", ".py", ".js", ".ts", ".tsx"}
     ignored_dirs = {"node_modules", ".git", "target", "dist", "build", ".venv", "venv"}
     candidates: List[Path] = []
@@ -534,7 +557,7 @@ def _collect_code_files(root: Path, max_files: int) -> List[Path]:
         if path.suffix.lower() in allowed:
             candidates.append(path)
     candidates.sort(key=lambda p: p.stat().st_size, reverse=True)
-    return candidates[:max_files]
+    return candidates[:max_files], len(candidates)
 
 
 def _format_repo_metrics(metrics: dict[str, Any]) -> str:
@@ -644,6 +667,7 @@ def analyze_github_repository(
     )
     repo_meta = context["repository"]
     docs = context["documents"]
+    meta = context.get("meta", {})
 
     per_file = []
     java_findings = []
@@ -708,6 +732,10 @@ def analyze_github_repository(
         "javaStaticFindings": java_findings,
         "repoMetrics": repo_metrics,
         "aiSummary": ai_summary,
+        "maxFilesRequested": meta.get("maxFilesRequested"),
+        "maxFilesApplied": meta.get("maxFilesApplied"),
+        "filesDiscovered": meta.get("filesDiscovered"),
+        "analyzedFileCount": meta.get("filesAnalyzed"),
     }
 
 

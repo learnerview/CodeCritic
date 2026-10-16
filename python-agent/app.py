@@ -10,9 +10,10 @@ import time
 import uuid
 import asyncio
 import logging
+import threading
 from contextlib import asynccontextmanager
 from pythonjsonlogger import jsonlogger
-from collections import defaultdict, deque
+from collections import OrderedDict, defaultdict, deque
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -24,6 +25,7 @@ from agent import (
     generate_full_test_suite,
     analyze_github_repository,
     analyze_debug_issue,
+    MAX_REPO_FILES,
     LLM,
 )
 
@@ -51,7 +53,7 @@ class TestGenerationResponse(BaseModel):
 class RepositoryAnalysisRequest(BaseModel):
     repoUrl: str = Field(min_length=1, max_length=2048)
     branch: str | None = None
-    maxFiles: int = Field(default=15, ge=1, le=100)
+    maxFiles: int = Field(default=15, ge=1, le=MAX_REPO_FILES)
     githubToken: str | None = None
 
 
@@ -61,6 +63,12 @@ class RepositoryAnalysisResponse(BaseModel):
     javaStaticFindings: list[dict]
     repoMetrics: dict
     aiSummary: str
+    # Effective file-limit reporting: ``filesAnalyzed`` above is the list of analyzed
+    # files, while these counts make the discovered-vs-analyzed distinction explicit.
+    maxFilesRequested: int | None = None
+    maxFilesApplied: int | None = None
+    filesDiscovered: int | None = None
+    analyzedFileCount: int | None = None
 
 
 class DebugRequest(BaseModel):
@@ -119,8 +127,79 @@ app.add_middleware(
 MAX_REQUEST_BYTES = int(os.getenv("MAX_REQUEST_BYTES", "1500000"))
 RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "60"))
 RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
+# Upper bound on distinct client IPs tracked at once. Without this the sliding-window
+# map grows without limit for traffic from many distinct IPs.
+RATE_LIMIT_MAX_IPS = int(os.getenv("RATE_LIMIT_MAX_IPS", "10000"))
 
-REQUEST_TIMES_BY_IP: dict[str, deque[float]] = defaultdict(deque)
+# LRU-ordered sliding-window state per client IP. The lock keeps it safe under the
+# thread pool uvicorn uses for sync endpoints.
+REQUEST_TIMES_BY_IP: "OrderedDict[str, deque[float]]" = OrderedDict()
+_rate_limit_lock = threading.Lock()
+
+
+def check_rate_limit(ip: str, now: float) -> bool:
+    """Record a hit for ``ip`` and return False when it is over the sliding-window limit.
+
+    The per-IP map is bounded: the most recently seen IP is moved to the end and the
+    least recently used entry is evicted once the size exceeds ``RATE_LIMIT_MAX_IPS``.
+    """
+    with _rate_limit_lock:
+        queue = REQUEST_TIMES_BY_IP.get(ip)
+        if queue is None:
+            queue = deque()
+            REQUEST_TIMES_BY_IP[ip] = queue
+        else:
+            REQUEST_TIMES_BY_IP.move_to_end(ip)
+        while queue and now - queue[0] > RATE_LIMIT_WINDOW_SECONDS:
+            queue.popleft()
+        allowed = len(queue) < RATE_LIMIT_REQUESTS
+        if allowed:
+            queue.append(now)
+        while len(REQUEST_TIMES_BY_IP) > RATE_LIMIT_MAX_IPS:
+            REQUEST_TIMES_BY_IP.popitem(last=False)
+        return allowed
+
+
+async def enforce_request_size(request: Request, request_id: str) -> JSONResponse | None:
+    """Reject oversized bodies, trusting neither Content-Length nor chunked framing.
+
+    Content-Length is used only as a cheap early rejection. The authoritative check
+    counts bytes actually read from the request stream and aborts as soon as the limit
+    is exceeded, so a missing header or chunked encoding cannot bypass it. The buffered
+    body is re-attached to the request so downstream handlers still parse it normally.
+    """
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_REQUEST_BYTES:
+                return JSONResponse(
+                    status_code=413,
+                    content={"detail": "Payload too large", "requestId": request_id},
+                    headers={"X-Request-Id": request_id},
+                )
+        except ValueError:
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "Invalid content-length header", "requestId": request_id},
+                headers={"X-Request-Id": request_id},
+            )
+
+    if request.method in ("POST", "PUT", "PATCH"):
+        body = bytearray()
+        async for chunk in request.stream():
+            body.extend(chunk)
+            if len(body) > MAX_REQUEST_BYTES:
+                return JSONResponse(
+                    status_code=413,
+                    content={"detail": "Payload too large", "requestId": request_id},
+                    headers={"X-Request-Id": request_id},
+                )
+        # Starlette's Request.stream() replays _body when set, so the handler can still
+        # read the body we consumed for the size check.
+        request._body = bytes(body)
+    return None
+
+
 METRICS: dict[str, object] = {
     "startedAtEpochMs": int(time.time() * 1000),
     "requestCount": 0,
@@ -148,33 +227,16 @@ async def production_middleware(request: Request, call_next):
     endpoint = request.url.path
     ip = request.client.host if request.client else "unknown"
 
-    content_length = request.headers.get("content-length")
-    if content_length:
-        try:
-            if int(content_length) > MAX_REQUEST_BYTES:
-                return JSONResponse(
-                    status_code=413,
-                    content={"detail": "Payload too large", "requestId": request_id},
-                    headers={"X-Request-Id": request_id},
-                )
-        except ValueError:
-            return JSONResponse(
-                status_code=400,
-                content={"detail": "Invalid content-length header", "requestId": request_id},
-                headers={"X-Request-Id": request_id},
-            )
+    too_large = await enforce_request_size(request, request_id)
+    if too_large is not None:
+        return too_large
 
-    now = time.time()
-    queue = REQUEST_TIMES_BY_IP[ip]
-    while queue and now - queue[0] > RATE_LIMIT_WINDOW_SECONDS:
-        queue.popleft()
-    if len(queue) >= RATE_LIMIT_REQUESTS:
+    if not check_rate_limit(ip, time.time()):
         return JSONResponse(
             status_code=429,
             content={"detail": "Rate limit exceeded", "requestId": request_id},
             headers={"X-Request-Id": request_id},
         )
-    queue.append(now)
 
     response = await call_next(request)
     latency_ms = int((time.time() - started) * 1000)
@@ -227,7 +289,11 @@ def metrics() -> dict:
         "statusCounts": dict(METRICS["statusCounts"]),
         "endpointCounts": dict(METRICS["endpointCounts"]),
         "latencyByEndpoint": latency_summary,
-        "rateLimit": {"requests": RATE_LIMIT_REQUESTS, "windowSeconds": RATE_LIMIT_WINDOW_SECONDS},
+        "rateLimit": {
+            "requests": RATE_LIMIT_REQUESTS,
+            "windowSeconds": RATE_LIMIT_WINDOW_SECONDS,
+            "maxTrackedIps": RATE_LIMIT_MAX_IPS,
+        },
         "maxRequestBytes": MAX_REQUEST_BYTES,
     }
 

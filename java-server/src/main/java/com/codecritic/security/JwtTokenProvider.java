@@ -1,5 +1,6 @@
 package com.codecritic.security;
 
+import com.codecritic.config.DeploymentProfile;
 import com.codecritic.config.JwtProperties;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
@@ -9,7 +10,6 @@ import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
 import java.util.Date;
 import java.util.Map;
 
@@ -22,7 +22,7 @@ import java.util.Map;
 @Component
 public class JwtTokenProvider {
 
-    /** Well-known demo default shipped in application.yml so local runs work without extra setup. */
+    /** Demo default shipped only under the {@code dev}/{@code test} profiles (application-dev.yml). */
     private static final String DEMO_DEFAULT_SECRET = "codecritic-demo-secret-key-change-me-in-production-0123456789";
 
     private final JwtProperties properties;
@@ -35,16 +35,16 @@ public class JwtTokenProvider {
         if (secretBytes.length < 32) {
             throw new IllegalStateException("codecritic.jwt.secret must be at least 32 bytes for HS256");
         }
-        if (isProduction(environment) && (secret.isBlank() || DEMO_DEFAULT_SECRET.equals(secret))) {
+        if (!DeploymentProfile.allowsDemoDefaults(environment) && DEMO_DEFAULT_SECRET.equals(secret)) {
+            // Default-deny: any profile that is not dev/test, and a deployment with no profile
+            // at all, must not sign tokens with the committed demo secret. Requiring an explicit
+            // dev/test profile means the safe behavior no longer depends on an operator
+            // remembering to set a "prod" profile.
             throw new IllegalStateException(
-                    "JWT_SECRET must be set to a non-default value in production. "
+                    "JWT_SECRET must be set to a non-default value outside the dev/test profiles. "
                             + "Refusing to start with the demo signing secret.");
         }
         this.key = Keys.hmacShaKeyFor(secretBytes);
-    }
-
-    private static boolean isProduction(Environment environment) {
-        return Arrays.asList(environment.getActiveProfiles()).contains("prod");
     }
 
     public String generateToken(String username, Map<String, Object> claims) {
