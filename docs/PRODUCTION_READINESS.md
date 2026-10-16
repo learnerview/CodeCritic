@@ -37,3 +37,16 @@ Honest call-outs — these are the reasons the project is not yet 10/10:
 4. Add a lint/format gate (Spotless + ruff/black) plus a dependency-vulnerability scan; optionally a coverage threshold.
 5. Add a `THIRD-PARTY-LICENSES`/NOTICE file and document the vendored SimplyDone4J license.
 6. Sandbox compilation of untrusted source and add auth in front of the Python agent.
+
+## Performance Baseline (to establish)
+
+No load/soak/benchmark tests currently exist in this repository. To establish a production
+baseline, run one of the following against a deployed instance and record p50/p95/p99 latency
+plus throughput:
+
+- **HTTP API.** `wrk -t4 -c100 -d30s http://host:port/endpoint` or `hey -z 30s -c 100`.
+- **Measurement points.** Submit endpoint throughput, read endpoint latency, WebSocket message
+  fanout rate, and webhook delivery lag.
+- **Record.** Store results in `docs/performance-baseline.md` (not committed to this repo yet) and
+  re-run on every release to detect regressions.
+
