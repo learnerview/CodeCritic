@@ -17,7 +17,6 @@ import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.index.Index;
 
 import java.time.Instant;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 
@@ -28,10 +27,13 @@ import java.util.Locale;
  * {@code AUTH_PASSWORD}).
  *
  * <p>The local-dev default is {@code admin}/{@code admin}, which keeps a fresh clone
- * runnable. That default is a published credential, so under the {@code prod} profile
- * this runner <em>refuses</em> to provision the account rather than silently creating a
- * publicly-known password on a reachable deployment. This mirrors the guard already
- * applied to {@code JWT_SECRET} in {@code JwtTokenProvider}.
+ * runnable under the explicit {@code dev} profile (see {@code application-dev.yml}).
+ * That default is a published credential, so the constructor <em>refuses to start</em>
+ * whenever {@code AUTH_PASSWORD} is unset or well-known and no development profile is
+ * active. Refusing to start (rather than logging and skipping provisioning) makes the
+ * misconfiguration impossible to miss and guarantees a reachable deployment is never
+ * created with a publicly-known password. This mirrors the guard applied to
+ * {@code JWT_SECRET} in {@code JwtTokenProvider}.
  */
 @Component
 public class DefaultUserInitializer implements ApplicationRunner {
@@ -47,23 +49,32 @@ public class DefaultUserInitializer implements ApplicationRunner {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
-    private final Environment environment;
     private final MongoTemplate mongoTemplate;
-
-    @Value("${codecritic.auth.username:admin}")
-    private String defaultUsername;
-
-    @Value("${codecritic.auth.password:admin}")
-    private String defaultPassword;
+    private final String defaultUsername;
+    private final String defaultPassword;
 
     public DefaultUserInitializer(UserRepository userRepository,
                                   PasswordEncoder passwordEncoder,
                                   Environment environment,
-                                  MongoTemplate mongoTemplate) {
+                                  MongoTemplate mongoTemplate,
+                                  @Value("${codecritic.auth.username:admin}") String defaultUsername,
+                                  @Value("${codecritic.auth.password:}") String defaultPassword) {
+        if (!DeploymentProfile.allowsDemoDefaults(environment) && isInsecure(defaultPassword)) {
+            // Fail fast here, in the constructor, so the context never finishes starting.
+            // The ApplicationRunner below runs after the web server is already listening, so
+            // a guard there would let a misconfigured deployment serve requests first; a
+            // constructor failure aborts startup outright and can never ship a published
+            // password. The message names the one env var the operator has to set.
+            throw new IllegalStateException("AUTH_PASSWORD is unset or a well-known default and no "
+                    + "development profile is active. Set AUTH_PASSWORD to a unique secret (the "
+                    + "Python agent uses it to obtain a token), or run with "
+                    + "SPRING_PROFILES_ACTIVE=dev for local development.");
+        }
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
-        this.environment = environment;
         this.mongoTemplate = mongoTemplate;
+        this.defaultUsername = defaultUsername;
+        this.defaultPassword = defaultPassword;
     }
 
     @Override
@@ -111,17 +122,6 @@ public class DefaultUserInitializer implements ApplicationRunner {
     }
 
     void ensureDefaultUser() {
-        if (isProduction() && isInsecure(defaultPassword)) {
-            // Do not throw: a missing service account must not stop the web tier from
-            // coming up, and Mongo may legitimately be unreachable at this point. Log at
-            // error level so the operator sees the API is unusable until they set a secret.
-            log.error("Refusing to create the default service user '{}' in production because "
-                            + "AUTH_PASSWORD is unset or a well-known default. Set AUTH_PASSWORD to a "
-                            + "unique secret (the Python agent uses it to obtain a token); until then "
-                            + "every /api/** call will be rejected.",
-                    defaultUsername);
-            return;
-        }
         try {
             if (userRepository.findByUsername(defaultUsername).isPresent()) {
                 log.info("Default user '{}' already exists; skipping creation.", defaultUsername);
@@ -149,10 +149,6 @@ public class DefaultUserInitializer implements ApplicationRunner {
             log.warn("Could not verify/create default user '{}': {}: {}",
                     defaultUsername, e.getClass().getSimpleName(), e.getMessage());
         }
-    }
-
-    private boolean isProduction() {
-        return Arrays.asList(environment.getActiveProfiles()).contains("prod");
     }
 
     static boolean isInsecure(String password) {

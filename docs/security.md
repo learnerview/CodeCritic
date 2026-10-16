@@ -10,7 +10,7 @@ The Java API is protected by **stateless JWT** (HS256 via jjwt):
 2. `POST /api/auth/login` validates credentials against MongoDB and returns a signed token valid for `JWT_EXPIRATION_MS` (default 24h).
 3. Every other `/api/**` request requires `Authorization: Bearer <token>`.
 4. `JwtAuthFilter` parses and verifies the token on each request and populates the Spring security context. Invalid/expired tokens are logged (not silently swallowed) and leave the context unauthenticated, which yields a `401`.
-5. The signing secret comes from `JWT_SECRET` (min 32 bytes for HS256). A demo default exists only for local dev — always override it in production.
+5. The signing secret comes from `JWT_SECRET` (min 32 bytes for HS256). The published demo default exists only under the explicit local-development `dev`/`test` profiles — any other profile, or none, refuses to start with it.
 
 **Public (permit-all) endpoints** — the roots below are configurable via `JwtProperties.permitAllPaths` and default to:
 - `/error`, `/health`
@@ -18,7 +18,7 @@ The Java API is protected by **stateless JWT** (HS256 via jjwt):
 
 Static assets (`/css/**`, `/js/**`, `/templates/**`) and the dashboard pages (`/`, `/index.html`, `/review`, `/repository`, `/debug` and their `.html` variants) are additionally permitted in `WebSecurityConfig`, since the browser must load the UI before any token exists.
 
-`AUTH_USERNAME` / `AUTH_PASSWORD` are **not** the dashboard login — they are the service-account the Python agent uses to call the Java API (`python-agent` logs in with them to get a token). On your own instance, register a dedicated user and point these at it. Under the `prod` profile the server refuses to create this account from the `admin`/`admin` default, so a reachable deployment is never left guarding `/api/**` with a published password.
+`AUTH_USERNAME` / `AUTH_PASSWORD` are **not** the dashboard login — they are the service-account the Python agent uses to call the Java API (`python-agent` logs in with them to get a token). On your own instance, register a dedicated user and point these at it. The `admin`/`admin` default exists only under the explicit `dev`/`test` profiles; on any other profile, or with no profile set, the server **fails to start** when `AUTH_PASSWORD` is unset or a well-known default, so a reachable deployment is never left guarding `/api/**` with a published password.
 
 ## Our threat model & important caveats
 
@@ -39,10 +39,14 @@ We keep these in mind every time we deploy:
   echo the caller's `Origin` back, so pairing it with `allowCredentials(true)` would let
   any website make a credentialed request against `/api/**` and read the response. Setting
   an explicit allowlist re-enables credentials; the server refuses the unsafe combination.
-- The default service account (`AUTH_USERNAME`/`AUTH_PASSWORD`) is **not** provisioned under
-  the `prod` profile when the password is unset or a well-known default such as `admin`.
-  The same guard already covers `JWT_SECRET`. Set a real secret before the first deploy, or
-  the Python agent cannot obtain a token and every `/api/**` call is rejected.
+- The default service account (`AUTH_USERNAME`/`AUTH_PASSWORD`) is **not** provisioned and the
+  app **fails to start** on any profile other than the explicit `dev`/`test` profiles when the
+  password is unset or a well-known default such as `admin`. The same default-deny guard covers
+  `JWT_SECRET` (blank, too short, or the committed demo secret). A deployment that simply
+  forgets to set a profile is treated as production, so the safe behavior does not depend on
+  remembering to opt in. Set real secrets before the first deploy, or run with
+  `SPRING_PROFILES_ACTIVE=dev` for local development; the demo defaults live only in
+  `application-dev.yml`.
 - Stateless design scales horizontally: no server-side session store.
 - **Prompt-injection hardening on every LLM entry point** (`agent.py`): all user-supplied
   code, logs, and repository content is wrapped in unambiguous `UNTRUSTED DATA` fences
@@ -57,8 +61,19 @@ We keep these in mind every time we deploy:
 |----------|---------|------|
 | `GROQ_API_KEY` | Primary LLM | Required |
 | `OPENAI_API_KEY` | Fallback LLM | Optional |
-| `JWT_SECRET` | Token signing (≥32 bytes) | Required (prod) |
+| `JWT_SECRET` | Token signing (≥32 bytes) | Required (outside dev/test) |
 | `GITHUB_TOKEN` | Private repos / higher API limits | Optional |
 | `AUTH_USERNAME` / `AUTH_PASSWORD` | Service account the Python agent logs in with | Optional (create a dedicated user) |
 
-Rotate `JWT_SECRET` and any service-account credentials before any real deployment, and never use the demo defaults outside local development. If you tighten `permitAllPaths` or the rate limits (`RATE_LIMIT_REQUESTS` / `MAX_REQUEST_BYTES`), you can find all of those knobs in [docs/deployment.md](docs/deployment.md).
+Rotate `JWT_SECRET` and any service-account credentials before any real deployment, and never use the demo defaults outside local development. If you tighten `permitAllPaths` or the rate limits (`RATE_LIMIT_REQUESTS` / `MAX_REQUEST_BYTES`), you can find all of those knobs in [docs/deployment.md](deployment.md).
+
+## Live secrets on a local machine (act now)
+
+A working copy of this repo contains an **untracked `.env` with a live `GROQ_API_KEY`** (plus the local `AUTH_*` demo values). `.env` is listed in `.gitignore`, so it is not committed — keep it that way. If you have been handed this checkout, or you are the operator:
+
+1. **Rotate the `GROQ_API_KEY`** in the Groq console immediately; treat the value currently in `.env` as compromised.
+2. **Never commit `.env`** (or any file containing a real key). Commit only `.env.example`, which ships placeholders.
+3. If a key is ever pushed, rotate it *and* purge it from history — deleting the file in a later commit is not enough.
+4. Set `OPENAI_API_KEY` only if you want the fallback provider; leave it blank otherwise.
+
+The same applies to any `GITHUB_TOKEN`, `JWT_SECRET`, or database URI you paste locally.

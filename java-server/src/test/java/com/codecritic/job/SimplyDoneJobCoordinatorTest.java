@@ -14,6 +14,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.RedisConnectionFailureException;
 
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -77,6 +79,79 @@ public class SimplyDoneJobCoordinatorTest {
         String key2 = SimplyDoneJobCoordinator.sha256Hex(jobType, payload2);
 
         assertNotEquals(key1, key2, "Different payloads must produce distinct idempotency keys");
+    }
+
+    /**
+     * The old key was a flat concatenation of {@code key=value} pairs, so {@code {a="1b=2"}}
+     * and {@code {a="1", b="2"}} produced the same pre-hash string and a second, different
+     * request could be deduplicated onto the first job. The canonical form must not allow it.
+     */
+    @Test
+    void structurallyDifferentPayloadsCannotCollide() {
+        String jobType = "bug-detection";
+
+        Map<String, Object> singleValueWithDelimiters = Map.of("a", "1b=2");
+        Map<String, Object> twoKeys = new LinkedHashMap<>();
+        twoKeys.put("a", "1");
+        twoKeys.put("b", "2");
+
+        assertNotEquals(SimplyDoneJobCoordinator.sha256Hex(jobType, singleValueWithDelimiters),
+                SimplyDoneJobCoordinator.sha256Hex(jobType, twoKeys),
+                "a value containing '=' and a second key must not hash to the same key");
+    }
+
+    /**
+     * The old key called {@code toString()} on nested values, so a nested map and a plain
+     * string that merely looked like one ({@code {b=c}}) collapsed to the same pre-hash text.
+     */
+    @Test
+    void nestedMapAndLookalikeStringValueCannotCollide() {
+        String jobType = "complexity-analysis";
+
+        Map<String, Object> nested = Map.of("a", Map.of("b", "c"));
+        Map<String, Object> lookalike = Map.of("a", "{b=c}");
+
+        assertNotEquals(SimplyDoneJobCoordinator.sha256Hex(jobType, nested),
+                SimplyDoneJobCoordinator.sha256Hex(jobType, lookalike),
+                "a nested map and a string that looks like one must not hash to the same key");
+    }
+
+    @Test
+    void identicalPayloadsProduceTheSameKeyRegardlessOfInsertionOrder() {
+        String jobType = "complexity-analysis";
+
+        Map<String, Object> first = new LinkedHashMap<>();
+        first.put("code", "public class A {}");
+        first.put("className", "A");
+        Map<String, Object> second = new LinkedHashMap<>();
+        second.put("className", "A");
+        second.put("code", "public class A {}");
+
+        assertEquals(SimplyDoneJobCoordinator.sha256Hex(jobType, first),
+                SimplyDoneJobCoordinator.sha256Hex(jobType, second),
+                "the same payload must be idempotent whatever order its keys arrived in");
+    }
+
+    @Test
+    void nestedMapInsertionOrderDoesNotChangeTheKey() {
+        Map<String, Object> innerFirst = new LinkedHashMap<>();
+        innerFirst.put("z", "1");
+        innerFirst.put("a", "2");
+        Map<String, Object> innerSecond = new LinkedHashMap<>();
+        innerSecond.put("a", "2");
+        innerSecond.put("z", "1");
+
+        assertEquals(SimplyDoneJobCoordinator.sha256Hex("t", Map.of("outer", innerFirst)),
+                SimplyDoneJobCoordinator.sha256Hex("t", Map.of("outer", innerSecond)),
+                "nested map order is not part of the job's identity");
+    }
+
+    /** List order is meaningful, so it must stay part of the key rather than being sorted away. */
+    @Test
+    void listOrderIsPreservedInTheKey() {
+        assertNotEquals(SimplyDoneJobCoordinator.sha256Hex("t", Map.of("x", List.of("a", "b"))),
+                SimplyDoneJobCoordinator.sha256Hex("t", Map.of("x", List.of("b", "a"))),
+                "two different list orders are two different payloads");
     }
 
     private JobResponse jobInStatus(String status, String result) {

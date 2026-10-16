@@ -56,7 +56,7 @@ curl -X POST http://localhost:8080/api/jobs/complexity \
 curl http://localhost:8080/api/jobs/<id> -H "Authorization: Bearer $TOKEN"
 ```
 
-Jobs are idempotent: retrying the same type + payload yields the same idempotency key (SHA-256), so the queue does not create duplicates. Async jobs need the scheduler/Redis enabled on your instance (`REDIS_URL` + `SIMPLYDONE4J_SCHEDULER_ENABLED`) — on Render we enable them via the managed Redis service, but the sync endpoints above work without them.
+Jobs are idempotent: the idempotency key is a **SHA-256 of the job type plus a canonical JSON encoding of the full payload** (map keys sorted at every nesting level, list order preserved), so identical submissions always map to the same key and distinct payloads cannot collide. Async jobs need the scheduler/Redis enabled on your instance (`REDIS_URL` + `SIMPLYDONE4J_SCHEDULER_ENABLED`) — on Render we enable them via the managed Redis service, but the sync endpoints above work without them. If the queue backend is unreachable, the request is transparently executed on a bounded in-memory fallback pool so the submit → poll contract still holds (see [docs/architecture.md](architecture.md)).
 
 ### Metrics
 
@@ -101,10 +101,12 @@ curl http://localhost:8000/ready    # readiness incl. LLM connectivity
 curl http://localhost:8000/metrics  # request/status/latency metrics
 ```
 
+A worked example of the `/analyze-repository` response format (deterministic metrics plus the LLM summary) is in [docs/sample-analysis-report.md](sample-analysis-report.md).
+
 ## Limits you can tune on your own instance
 
-- `MAX_REQUEST_BYTES` (default `1500000`) — payloads larger than this get `413`.
-- Repository analysis accepts `maxFiles` from `1` through `100`; larger or invalid values are rejected with `422` before any GitHub work starts.
+- `MAX_REQUEST_BYTES` (default `1500000`) — payloads larger than this get `413`. This ceiling applies to every request body on the Python agent.
+- Repository analysis accepts `maxFiles` from `1` through `MAX_REPO_FILES` (**default `30`**), defaulting to `15` when omitted; larger or invalid values are rejected with `422` before any GitHub work starts. Inside `build_repository_context` the value is clamped again with `max(1, min(maxFiles, MAX_REPO_FILES))`, and the response reports `maxFilesRequested` / `maxFilesApplied` / `filesDiscovered` / `analyzedFileCount` so the effective limit is never silent. The dashboard input mirrors this with `min="1" max="30" value="15"`.
 - Rate limiting per IP: `RATE_LIMIT_REQUESTS` (default `60`) per `RATE_LIMIT_WINDOW_SECONDS` (default `60`) → `429` when exceeded.
 - Which endpoints are public (`permitAllPaths` in `JwtProperties`) and how long tokens live (`JWT_EXPIRATION_MS`).
 

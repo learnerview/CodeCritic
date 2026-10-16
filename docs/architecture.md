@@ -53,7 +53,7 @@ The controller layer only talks to `AnalysisService`, a thin facade:
   - Complexity → `ComplexityAnalyzer` (Strategy)
   - Bugs → `BugDetector` (Composite of pattern + cached SpotBugs)
   - Tests → `TestGenerator` (Strategy)
-  - Jobs → `JobCoordinator` (Adapter over SimplyDone4J)
+  - Jobs → `JobCoordinator` (Adapter over SimplyDone4J, wrapped by a resilient decorator)
 
 New analysis types are added by implementing the relevant interface — `ComplexityAnalyzer`, `BugDetector` or `TestGenerator` — as a Spring `@Component` and injecting it where needed; the wiring is ordinary constructor injection (Open/Closed Principle).
 
@@ -64,11 +64,15 @@ New analysis types are added by implementing the relevant interface — `Complex
 
 ### Idempotent async jobs
 
-`SimplyDoneJobCoordinator.sha256Hex(jobType, payload)` derives a deterministic idempotency key by hashing the job type plus the payload keys **in sorted order**, so identical submissions always produce the same key regardless of map iteration order. Retrying the same submission returns the same key, so SimplyDone4J does not create duplicate work. The key remains deterministic even if SHA-256 is unavailable (it falls back to a deterministic hash rather than a random value).
+`SimplyDoneJobCoordinator.sha256Hex(jobType, payload)` derives a deterministic idempotency key by hashing the job type plus a **canonical JSON encoding of the full payload**: the payload is serialized with an `ObjectMapper` configured with `SORT_PROPERTIES_ALPHABETICALLY` and `ORDER_MAP_ENTRIES_BY_KEYS`, so map keys are sorted at *every* nesting level while list order is preserved (list order is part of a job's identity). Identical submissions therefore always produce the same key regardless of map iteration order, and structurally different payloads cannot collide — the old flat `key=value` concatenation let `{a="1b=2"}` and `{a="1", b="2"}` fold into the same pre-hash string. Retrying the same submission returns the same key, so SimplyDone4J does not create duplicate work.
+
+Two failure modes deliberately do **not** fall back to a weaker key: a payload that cannot be canonically serialized (`IllegalStateException`), and a JVM without SHA-256 (`IllegalStateException`). Substituting a lossy key would silently merge distinct jobs, which is exactly the collision the canonical form exists to prevent.
 
 The producer passed to the queue is the originating identity qualified by the job type (e.g. `alice-complexity-analysis`), so SimplyDone4J's per-producer rate limiter is not shared across unrelated job types from the same user. Idempotency still holds because the same user + job type + content yields the same producer + key.
 
 Handlers are registered with the library at startup by `SimplyDoneHandlerRegistrar`; SimplyDone4J dispatches queued jobs only through its `HandlerRegistry`, so job types with no registered handler are rejected with "No handler registered".
+
+**Graceful degradation.** `ResilientJobCoordinator` is the `@Primary` `JobCoordinator`. If the queue backend is unavailable (Redis/Mongo down) it catches the failure and runs the job on a bounded `ThreadPoolExecutor` (core 2 / max 4 / queue 50, mirroring `simplydone4j.executor`), retaining results in a synchronized LRU capped at 256 entries with a 5-minute TTL — so the submit → poll contract still resolves. Deliberate load-shedding signals (`RateLimitExceededException`, `QueueFullException`) are **not** downgraded to local execution; they propagate so the caller can answer `429`/`503`. Job status reads distinguish a genuinely unknown id (`JobNotFoundException` → `null` → `404`) from an infrastructure fault (propagated → `5xx`), and terminal statuses the UI cannot render (`DLQ`, `CANCELLED`) are reported as `FAILEDWithError` so the poller stops instead of spinning.
 
 ## Python layer (the orchestrator)
 
@@ -96,7 +100,7 @@ java-server/src/main/java/com/codecritic/
   controller/        AnalysisController, AuthController, ConfigController, FrontendController, HealthController
   dto/               Transport records
   exception/         Global error handling
-  job/               JobCoordinator adapter over SimplyDone4J
+  job/               JobCoordinator adapter over SimplyDone4J + resilient fallback decorator
   metrics/           AnalysisMetrics registry
   model/ repository/ User entity + repository
   security/          JWT provider + auth filter

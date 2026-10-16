@@ -52,4 +52,41 @@ class JwtTokenProviderTest {
         assertFalse(tokenProvider.validateToken("not-a-jwt"));
         assertFalse(tokenProvider.validateToken(""));
     }
+
+    /**
+     * The demo signing secret is published in the repo, so any deployment that did not
+     * explicitly opt into a development profile must refuse to start with it — not merely
+     * warn. A profile-less deployment is included, because that was the previously unguarded
+     * case.
+     */
+    @Test
+    void constructor_refusesTheDemoSecretOutsideDevelopment() {
+        JwtProperties properties = demoSecretProperties();
+        for (String profile : new String[]{"prod", "staging"}) {
+            Environment env = mock(Environment.class);
+            when(env.getActiveProfiles()).thenReturn(new String[]{profile});
+            assertThrows(IllegalStateException.class, () -> new JwtTokenProvider(properties, env));
+        }
+
+        Environment noProfile = mock(Environment.class);
+        when(noProfile.getActiveProfiles()).thenReturn(new String[0]);
+        assertThrows(IllegalStateException.class, () -> new JwtTokenProvider(properties, noProfile));
+    }
+
+    @Test
+    void constructor_acceptsTheDemoSecretUnderADevelopmentProfile() {
+        JwtProperties properties = demoSecretProperties();
+        Environment dev = mock(Environment.class);
+        when(dev.getActiveProfiles()).thenReturn(new String[]{"dev"});
+
+        assertDoesNotThrow(() -> new JwtTokenProvider(properties, dev));
+    }
+
+    private static JwtProperties demoSecretProperties() {
+        JwtProperties properties = new JwtProperties();
+        properties.setSecret("codecritic-demo-secret-key-change-me-in-production-0123456789");
+        properties.setExpirationMs(60_000L);
+        properties.setIssuer("codecritic");
+        return properties;
+    }
 }

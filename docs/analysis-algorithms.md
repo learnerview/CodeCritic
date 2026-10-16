@@ -33,6 +33,7 @@ SpotBugs compiles the submitted source in a unique temp directory (named `codecr
 SpotBugs is expensive (compile + subprocess), so results are cached:
 - **Key** = SHA-256(source + `DETECTOR_VERSION`). Bumping the version invalidates everything.
 - **Bounded LRU**: a synchronized, access-ordered `LinkedHashMap` limited to 256 entries evicts the least-recently-used entry instead of clearing the whole cache.
+- **In-flight de-duplication**: concurrent calls for the same key share a single `CompletableFuture`, so N simultaneous submissions of identical source trigger one SpotBugs run and the rest await its result rather than recompiling in parallel.
 
 ## 3. Test generation (`/api/generate-test`)
 

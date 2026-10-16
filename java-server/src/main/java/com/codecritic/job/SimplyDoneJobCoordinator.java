@@ -1,5 +1,10 @@
 package com.codecritic.job;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.MapperFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import io.github.learnerview.simplydone4j.dto.JobResponse;
 import io.github.learnerview.simplydone4j.dto.JobSubmissionRequest;
 import io.github.learnerview.simplydone4j.dto.JobSubmissionResponse;
@@ -11,7 +16,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeMap;
 import java.security.MessageDigest;
 import java.nio.charset.StandardCharsets;
 
@@ -45,6 +49,19 @@ public class SimplyDoneJobCoordinator implements JobCoordinator {
 
     private final JobSubmissionService jobSubmissionService;
 
+    /**
+     * Used only to produce the canonical payload form hashed into the idempotency key. Map
+     * entries are sorted at every nesting level, so two payloads that differ only in map
+     * insertion order serialize identically, and JSON's quoting/escaping makes the encoding
+     * unambiguous: distinct payloads can no longer fold into the same pre-hash string the way
+     * the old flat {@code key=value} concatenation could (e.g. {@code {a="1b=2"}} vs
+     * {@code {a="1", b="2"}}).
+     */
+    private static final ObjectMapper CANONICAL_MAPPER = JsonMapper.builder()
+            .configure(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY, true)
+            .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true)
+            .build();
+
     public SimplyDoneJobCoordinator(JobSubmissionService jobSubmissionService) {
         this.jobSubmissionService = jobSubmissionService;
     }
@@ -69,12 +86,16 @@ public class SimplyDoneJobCoordinator implements JobCoordinator {
     }
 
     static String sha256Hex(String jobType, Map<String, Object> payload) {
-        StringBuilder sb = new StringBuilder();
-        sb.append(jobType);
-        for (Map.Entry<String, Object> entry : new TreeMap<>(payload).entrySet()) {
-            sb.append(entry.getKey()).append("=").append(entry.getValue());
+        String canonical;
+        try {
+            canonical = jobType + "\n" + CANONICAL_MAPPER.writeValueAsString(payload);
+        } catch (JsonProcessingException e) {
+            // A payload that cannot be canonically serialized is a programming error. Falling
+            // back to a lossy key would silently merge distinct jobs, which is exactly the
+            // collision this method exists to prevent, so the submission fails loudly instead.
+            throw new IllegalStateException("Job payload is not JSON-serializable: " + e.getMessage(), e);
         }
-        return computeSha256(sb.toString());
+        return computeSha256(canonical);
     }
 
     private static String computeSha256(String input) {
@@ -87,8 +108,10 @@ public class SimplyDoneJobCoordinator implements JobCoordinator {
             }
             return hexBuilder.toString();
         } catch (Exception e) {
-            log.warn("SHA-256 computation failed, using deterministic fallback key: {}", e.getMessage());
-            return "codecritic-fallback-" + input.hashCode();
+            // SHA-256 is mandated by every JRE; reaching here means the runtime is broken,
+            // not that the payload is at fault. Propagating rather than substituting a weak
+            // key keeps the no-collision contract of this method intact.
+            throw new IllegalStateException("SHA-256 is unavailable on this JVM", e);
         }
     }
 
