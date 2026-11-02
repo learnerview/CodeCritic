@@ -7,6 +7,9 @@ server:
       min-spare: 4
 
 codecritic:
+  python-agent:
+    url: ${PYTHON_AGENT_URL:http://localhost:8000}
+    token: ${PYTHON_AGENT_TOKEN:}
   auth:
     username: ${AUTH_USERNAME:admin}
     # No default password on purpose: a blank AUTH_PASSWORD is refused at startup unless an

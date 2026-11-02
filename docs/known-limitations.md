@@ -43,9 +43,16 @@ This document records acknowledged limitations. Most are intentional trade-offs 
 
 ## Security posture
 
-- **Not hardened against untrusted input.** The Java service accepts arbitrary Java source; the deployed image ships a JDK plus the `spotbugs` CLI, so submitted source is compiled in a temp directory and analyzed. The Python agent has no auth. See `docs/security.md`. Do not expose to the public internet without a sandbox.
+- **Untrusted-source scope is explicit.** The Java service accepts arbitrary
+  Java source for static analysis; SpotBugs compilation uses a temporary
+  directory, while differential build/test execution is isolated in the
+  Docker sandbox. The internal Python routes require the shared service token,
+  but the Java API still needs normal network and authentication controls.
 - **Stateless JWT** means tokens are not revocable before expiry, and there is no refresh-token rotation.
-- **SpotBugs is best-effort.** The container runtime is a JDK (`eclipse-temurin:21-jdk`) with the `spotbugs` CLI installed (see `java-server/Dockerfile`), so `/api/bugs` on Render combines the pattern detector with real SpotBugs analysis. The toolchain is pinned as a dependency; if it is unavailable the detector still fails gracefully and returns only pattern-based findings rather than failing the request.
+- **SpotBugs is best-effort.** When the `spotbugs` CLI is available (see
+  `java-server/Dockerfile`), `/api/bugs` combines the pattern detector with
+  SpotBugs analysis. If it is unavailable the detector still fails gracefully
+  and returns only pattern-based findings rather than failing the request.
 
 ## Observability gaps
 

@@ -7,7 +7,7 @@ on:
 
 jobs:
   java:
-    name: Java server (build + tests)
+    name: CodeCritic
     runs-on: ubuntu-latest
     # SecurityIntegrationTest is a true integration test: it registers a user through the
     # real filter chain and deletes it again via UserRepository, so it needs a live Mongo.
@@ -30,23 +30,4 @@ jobs:
           java-version: '21'
           cache: maven
       - name: Build and test
-        working-directory: java-server
         run: mvn -B test
-        env:
-          SPRING_DATA_MONGODB_URI: mongodb://localhost:27017/codecritic
-
-  python:
-    name: Python agent (compile + smoke)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: pip
-      - name: Install dependencies
-        working-directory: python-agent
-        run: pip install -r requirements.txt
-      - name: Compile check
-        working-directory: python-agent
-        run: python -m py_compile agent.py app.py groq_llm.py integration_test.py

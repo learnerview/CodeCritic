@@ -1,14 +1,3 @@
-const IS_LOCAL = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
-let PYTHON_AGENT_BASE = window.CODECRITIC_PYTHON_API || (IS_LOCAL ? `${window.location.protocol}//${window.location.hostname}:8000` : '');
-fetch('/api/config')
-    .then((r) => (r.ok ? r.json() : null))
-    .then((cfg) => {
-        if (cfg && cfg.pythonAgentUrl) PYTHON_AGENT_BASE = cfg.pythonAgentUrl;
-        console.log(`CodeCritic: Python agent at ${PYTHON_AGENT_BASE}`);
-    })
-    .catch(() => {
-        console.warn('CodeCritic: /api/config unavailable, keeping default agent URL');
-    });
 const TOKEN_KEY = 'codecritic_token';
 const USERNAME_KEY = 'codecritic_username';
 
@@ -18,7 +7,7 @@ const toText = (value) => (typeof value === 'string' ? value : JSON.stringify(va
 const withSpinner = (text) => `<span class="loading-spinner"></span>${text}`;
 const withoutSpinner = (text) => text.replace(/<span class="loading-spinner"><\/span>/g, '');
 
-console.log('CodeCritic: dashboard v2.1.0 (JWT + unified workspace + async jobs)');
+console.log('CodeCritic: deterministic-first review workspace');
 
 const SAMPLES = {
     simple: `public class Hello {
@@ -505,8 +494,7 @@ function initReviewPage() {
     const runFullTestGeneration = async () => {
         setStatus(withSpinner('Generating complete AI test suite...'));
         clearError();
-        if (!PYTHON_AGENT_BASE) throw new Error('Python agent URL is not loaded yet - wait a moment and try again.');
-        const data = await postJson(`${PYTHON_AGENT_BASE}/generate-tests`, { code: getCode() });
+        const data = await postJson('/api/generate-tests', { code: getCode() });
         setStructuredView('ai', data.tests ?? data, data.tests ?? data);
         setStatus('Complete AI test suite generated');
         toast('AI test suite ready', 'success');
@@ -515,8 +503,7 @@ function initReviewPage() {
     const runReview = async () => {
         setStatus(withSpinner('Running AI review...'));
         clearError();
-        if (!PYTHON_AGENT_BASE) throw new Error('Python agent URL is not loaded yet - wait a moment and try again.');
-        const data = await postJson(`${PYTHON_AGENT_BASE}/review`, { code: getCode() });
+        const data = await postJson('/api/review', { code: getCode() });
         setStructuredView('ai', data.review ?? data, data.review ?? data);
         setStatus('AI review complete');
         toast('AI review complete', 'success');
@@ -582,8 +569,7 @@ function initRepositoryPage() {
         }
         if (repoOutput) repoOutput.classList.remove('error');
         try {
-            if (!PYTHON_AGENT_BASE) throw new Error('Python agent URL is not loaded yet - wait a moment and try again.');
-            const data = await postJson(`${PYTHON_AGENT_BASE}/analyze-repository`, {
+            const data = await postJson('/api/analyze-repository', {
                 repoUrl: repoUrl.value,
                 branch: repoBranch?.value || null,
                 maxFiles: Number(repoMaxFiles?.value || 15),
@@ -641,9 +627,8 @@ function initDebugPage() {
             }
             if (debugOutput) debugOutput.classList.remove('error');
             try {
-                if (!PYTHON_AGENT_BASE) throw new Error('Python agent URL is not loaded yet - wait a moment and try again.');
                 const code = editor ? editor.getValue() : debugCodeTextarea.value;
-                const data = await postJson(`${PYTHON_AGENT_BASE}/debug`, {
+                const data = await postJson('/api/debug', {
                     code,
                     errorLog: debugErrorInput?.value || '',
                     language: debugLanguage?.value || 'java'

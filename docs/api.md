@@ -1,10 +1,11 @@
 # API Reference
 
-These are the endpoints we expose for CodeCritic. On our live demo the Java server is at `https://codecritic-java.onrender.com`; when you host your own instance, the base URLs are just wherever you run the two services (`JAVA_SERVER_URL` / port assignments — see [docs/deployment.md](docs/deployment.md)).
+These are the public Java endpoints exposed by CodeCritic. The Python agent is
+an internal implementation detail and is never called directly by the browser.
 
 ## Java server (`:8080`)
 
-All `/api/**` endpoints require a JWT except `/api/auth/*` and `/api/config`, which are public. `GET /health` and `/error` are also public. (The `/ready` endpoint with LLM-connectivity reporting belongs to the Python agent on `:8000`; the Java server exposes only `/health`.)
+All `/api/**` endpoints require a JWT except `/api/auth/*` and `/api/config`, which are public. `GET /health` and `/error` are also public.
 
 ### Auth
 
@@ -56,7 +57,7 @@ curl -X POST http://localhost:8080/api/jobs/complexity \
 curl http://localhost:8080/api/jobs/<id> -H "Authorization: Bearer $TOKEN"
 ```
 
-Jobs are idempotent: the idempotency key is a **SHA-256 of the job type plus a canonical JSON encoding of the full payload** (map keys sorted at every nesting level, list order preserved), so identical submissions always map to the same key and distinct payloads cannot collide. Async jobs need the scheduler/Redis enabled on your instance (`REDIS_URL` + `SIMPLYDONE4J_SCHEDULER_ENABLED`) — on Render we enable them via the managed Redis service, but the sync endpoints above work without them. If the queue backend is unreachable, the request is transparently executed on a bounded in-memory fallback pool so the submit → poll contract still holds (see [docs/architecture.md](architecture.md)).
+Jobs are idempotent: the idempotency key is a **SHA-256 of the job type plus a canonical JSON encoding of the full payload** (map keys sorted at every nesting level, list order preserved), so identical submissions always map to the same key and distinct payloads cannot collide. Async jobs need the scheduler/Redis enabled on the instance; the sync endpoints above work without it. If the queue backend is unreachable, the request is transparently executed on a bounded in-memory fallback pool so the submit → poll contract still holds (see [docs/architecture.md](architecture.md)).
 
 ### Metrics
 
@@ -68,37 +69,37 @@ curl http://localhost:8080/api/metrics -H "Authorization: Bearer $TOKEN"
 
 ```bash
 curl http://localhost:8080/health       # public
-curl http://localhost:8080/api/config   # public; tells the browser where the agent lives
+curl http://localhost:8080/api/config   # public UI-safe feature configuration
 ```
 
-## Python agent (`:8000`)
+## Advisory review routes
 
-No auth — intended for trusted/internal use between our own services (see [docs/security.md](docs/security.md)).
+These routes are handled by Java and then forwarded to the internal Python agent
+with the service credential. Clients must use the Java base URL and a JWT.
 
 ```bash
 # Review pipeline (deterministic analysis + LLM review)
-curl -X POST http://localhost:8000/review \
+curl -X POST http://localhost:8080/api/review \
   -H "Content-Type: application/json" \
   -d '{"code":"public class Calculator { public int divide(int a,int b){ return a/b; } }"}'
 
 # Full LLM JUnit test suite
-curl -X POST http://localhost:8000/generate-tests \
+curl -X POST http://localhost:8080/api/generate-tests \
   -H "Content-Type: application/json" \
   -d '{"code":"public class Calculator { public int add(int a,int b){ return a+b; } }"}'
 
 # GitHub repository analysis
-curl -X POST http://localhost:8000/analyze-repository \
+curl -X POST http://localhost:8080/api/analyze-repository \
   -H "Content-Type: application/json" \
   -d '{"repoUrl":"https://github.com/octocat/Hello-World","branch":null,"maxFiles":15,"githubToken":null}'
 
 # Debug/diagnosis
-curl -X POST http://localhost:8000/debug \
+curl -X POST http://localhost:8080/api/debug \
   -H "Content-Type: application/json" \
   -d '{"language":"java","code":"public class A { int f(int x){ return 10/x; } }","errorLog":"ArithmeticException: / by zero"}'
 
-curl http://localhost:8000/health   # liveness
-curl http://localhost:8000/ready    # readiness incl. LLM connectivity
-curl http://localhost:8000/metrics  # request/status/latency metrics
+The Python health and metrics endpoints are internal diagnostics, not part of
+the public browser API.
 ```
 
 A worked example of the `/analyze-repository` response format (deterministic metrics plus the LLM summary) is in [docs/sample-analysis-report.md](sample-analysis-report.md).
@@ -110,4 +111,5 @@ A worked example of the `/analyze-repository` response format (deterministic met
 - Rate limiting per IP: `RATE_LIMIT_REQUESTS` (default `60`) per `RATE_LIMIT_WINDOW_SECONDS` (default `60`) → `429` when exceeded.
 - Which endpoints are public (`permitAllPaths` in `JwtProperties`) and how long tokens live (`JWT_EXPIRATION_MS`).
 
-See [docs/deployment.md](docs/deployment.md) for the full list of variables.
+See the source configuration classes and [docs/known-limitations.md](known-limitations.md)
+for request limits and intentional behavior.

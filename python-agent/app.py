@@ -11,6 +11,7 @@ import uuid
 import asyncio
 import logging
 import threading
+import hmac
 from contextlib import asynccontextmanager
 from pythonjsonlogger import jsonlogger
 from collections import OrderedDict, defaultdict, deque
@@ -125,6 +126,8 @@ app.add_middleware(
 )
 
 MAX_REQUEST_BYTES = int(os.getenv("MAX_REQUEST_BYTES", "1500000"))
+INTERNAL_AGENT_TOKEN = os.getenv("PYTHON_AGENT_TOKEN", "")
+PROTECTED_AGENT_PATHS = {"/review", "/generate-tests", "/analyze-repository", "/debug"}
 RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "60"))
 RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
 # Upper bound on distinct client IPs tracked at once. Without this the sliding-window
@@ -223,6 +226,14 @@ def is_java_code(code: str) -> bool:
 async def production_middleware(request: Request, call_next):
     request_id = str(uuid.uuid4())
     request.state.request_id = request_id
+    if request.url.path in PROTECTED_AGENT_PATHS and INTERNAL_AGENT_TOKEN:
+        supplied = request.headers.get("X-CodeCritic-Agent-Token", "")
+        if not hmac.compare_digest(supplied, INTERNAL_AGENT_TOKEN):
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Internal service authentication required", "requestId": request_id},
+                headers={"X-Request-Id": request_id},
+            )
     started = time.time()
     endpoint = request.url.path
     ip = request.client.host if request.client else "unknown"

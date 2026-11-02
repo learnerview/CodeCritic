@@ -174,7 +174,6 @@ public class SimplyDoneJobCoordinator implements JobCoordinator {
                 .visibleAt(response.getVisibleAt())
                 .leaseOwner(response.getLeaseOwner())
                 .timeoutSeconds(response.getTimeoutSeconds())
-                .callbackUrl(response.getCallbackUrl())
                 .startedAt(response.getStartedAt())
                 .completedAt(response.getCompletedAt())
                 .attemptCount(response.getAttemptCount())

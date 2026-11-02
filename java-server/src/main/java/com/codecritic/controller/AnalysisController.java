@@ -1,5 +1,6 @@
 package com.codecritic.controller;
 
+import com.codecritic.agent.PythonAgentClient;
 import com.codecritic.dto.*;
 import com.codecritic.metrics.AnalysisMetrics;
 import com.codecritic.service.AnalysisService;
@@ -11,7 +12,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.Authentication;
 import org.springframework.http.ResponseEntity;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.web.bind.annotation.*;
+import jakarta.validation.Valid;
 
 import java.util.Map;
 
@@ -32,10 +35,18 @@ public class AnalysisController {
 
     private final AnalysisService analysisService;
     private final AnalysisMetrics metrics;
+    private final PythonAgentClient pythonAgentClient;
 
     public AnalysisController(AnalysisService analysisService, AnalysisMetrics metrics) {
+        this(analysisService, metrics, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public AnalysisController(AnalysisService analysisService, AnalysisMetrics metrics,
+                              ObjectProvider<PythonAgentClient> pythonAgentClient) {
         this.analysisService = analysisService;
         this.metrics = metrics;
+        this.pythonAgentClient = pythonAgentClient.getIfAvailable();
     }
 
     @GetMapping("/metrics")
@@ -76,6 +87,7 @@ public class AnalysisController {
         if (req == null) {
             return ResponseEntity.badRequest().build();
         }
+
         String className = req.className() != null ? req.className() : "";
         String methodName = req.methodName() != null ? req.methodName() : "";
         String parameters = req.parameters() != null ? req.parameters() : "";
@@ -87,6 +99,26 @@ public class AnalysisController {
             log.error("Test generation failed", e);
             return ResponseEntity.internalServerError().build();
         }
+    }
+
+    @PostMapping("/review")
+    public ResponseEntity<?> review(@Valid @RequestBody PythonReviewRequest req) {
+        return ResponseEntity.ok(pythonAgentClient.review(req));
+    }
+
+    @PostMapping("/generate-tests")
+    public ResponseEntity<?> generateFullTests(@Valid @RequestBody PythonReviewRequest req) {
+        return ResponseEntity.ok(pythonAgentClient.generateTests(req));
+    }
+
+    @PostMapping("/analyze-repository")
+    public ResponseEntity<?> analyzeRepository(@Valid @RequestBody RepositoryAnalysisRequest req) {
+        return ResponseEntity.ok(pythonAgentClient.analyzeRepository(req));
+    }
+
+    @PostMapping("/debug")
+    public ResponseEntity<?> debug(@Valid @RequestBody DebugAnalysisRequest req) {
+        return ResponseEntity.ok(pythonAgentClient.debug(req));
     }
 
     @PostMapping("/jobs/complexity")
