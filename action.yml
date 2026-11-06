@@ -67,7 +67,7 @@ runs:
         esac
         echo "path=$output" >> "$GITHUB_OUTPUT"
 
-    - uses: actions/setup-java@v4
+    - uses: actions/setup-java@v6
       with:
         distribution: temurin
         java-version: ${{ inputs['java-version'] }}
